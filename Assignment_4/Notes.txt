@@ -1,7 +1,8 @@
-module load slurm
+
 sbatch ...
 
 conda activate Assignment_4
+module load slurm
 sbatch ... 
 
 squeue
