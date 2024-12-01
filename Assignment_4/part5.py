@@ -130,6 +130,8 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.savefig(f"{results_dir}/confusion_matrix.png")
     plt.close()
 
+from transformers import DataCollatorForLanguageModeling, AutoConfig, AutoModelForMaskedLM
+
 def pretrain_with_mlm(model_name, train_set, tokenizer):
     """Perform masked language modeling (MLM) on the train set."""
     print(f"Pre-training {model_name} with MLM...")
@@ -137,6 +139,9 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     # Load model for MLM
     config = AutoConfig.from_pretrained(model_name)
     model = AutoModelForMaskedLM.from_pretrained(model_name, config=config)
+
+    # Ensure the model's embeddings match the tokenizer's vocabulary
+    model.resize_token_embeddings(len(tokenizer))
 
     # Tokenize data and add `labels`
     def add_labels(examples):
@@ -146,14 +151,21 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
             truncation=True,
             max_length=SETTINGS["max_token_length"],
         )
-        tokenized_inputs["labels"] = tokenized_inputs["input_ids"].copy()  # Copy input_ids as labels
+        # Ensure labels are within vocab size
+        tokenized_inputs["labels"] = [
+            token if token < tokenizer.vocab_size else tokenizer.pad_token_id
+            for token in tokenized_inputs["input_ids"]
+        ]
         return tokenized_inputs
 
     tokenized_data = train_set.map(add_labels, batched=True)
-    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-    # Ensure the model's embeddings match the tokenizer's vocabulary
-    model.resize_token_embeddings(len(tokenizer))
+    # Debugging: Check the max label ID
+    max_label_id = max([max(label) for label in tokenized_data["labels"]])
+    print(f"Max label ID in dataset: {max_label_id}")
+    print(f"Tokenizer vocabulary size: {tokenizer.vocab_size}")
+
+    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
     # Data collator for MLM
     data_collator = DataCollatorForLanguageModeling(
@@ -184,11 +196,6 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     trainer.train()
     print(f"Finished pre-training {model_name} with MLM.")
     return model
-
-
-
-
-
 
 from transformers import DataCollatorForLanguageModeling
 
