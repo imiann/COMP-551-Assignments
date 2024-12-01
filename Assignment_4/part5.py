@@ -228,13 +228,18 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     # Handle GPT-2 specifics
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.padding_side = "left"
+            print("Adding padding token for GPT-2...")
+            tokenizer.pad_token = tokenizer.eos_token  # Set pad_token to eos_token
+        tokenizer.padding_side = "left"  # GPT-2 requires left-padding for causal models
 
     model = AutoModelForSequenceClassification.from_pretrained(
         model_identifier,
         num_labels=len(class_labels),
     ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+
+    # Resize embeddings for GPT-2 if new tokens are added
+    if "gpt2" in model_identifier:
+        model.resize_token_embeddings(len(tokenizer))
 
     # Tokenize datasets
     train_set = tokenize_data(train_set, tokenizer, config["max_token_length"])
@@ -244,6 +249,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     train_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    # Use DataCollatorWithPadding for dynamic padding
+    from transformers import DataCollatorWithPadding
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
     # Training configuration
     output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
@@ -271,6 +280,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         train_dataset=train_set,
         eval_dataset=val_set,
         tokenizer=tokenizer,
+        data_collator=data_collator,  # Ensure proper padding
         compute_metrics=evaluate_predictions,
     )
 
@@ -278,10 +288,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     print(f"Training {model_identifier}...")
     trainer.train()
 
-        # Evaluation
+    # Evaluation
     print(f"Evaluating {model_identifier}...")
     predictions = trainer.predict(test_set)
-    results_dir = config["output_directory"]
+    results_dir = f"{output_dir}/metrics"
     generate_detailed_metrics(
         model_identifier.split("/")[-1],  # Use model name for subdirectory
         predictions.label_ids,
@@ -289,7 +299,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         class_labels,
         results_dir,
     )
-
 
     # Visualization (only for BERT-like models)
     if "bert" in model_identifier:
@@ -311,7 +320,8 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         attention = outputs.attentions
         tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
 
-        visualize_attention_manual(attention, tokens, output_dir)
+        visualize_attention_manual(attention, tokens, output_dir, model_identifier.split("/")[-1])
+
 
 
 # Main Script Execution
@@ -328,7 +338,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased", "gpt2"]
+    model_identifiers = ["gpt2", "bert-base-uncased"]
 
     for model_identifier in model_identifiers:
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
