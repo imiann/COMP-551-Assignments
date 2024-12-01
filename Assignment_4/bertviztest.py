@@ -1,10 +1,11 @@
 import torch
 from transformers import AutoTokenizer, AutoModel
 from bertviz import head_view
-from IPython.display import HTML
+import matplotlib.pyplot as plt
+import numpy as np
 
 def test_bertviz_debug(model_ckpt="bert-base-uncased"):
-    """Test BERTViz functionality with detailed debugging."""
+    """Test BERTViz functionality with detailed debugging and fallback visualization."""
     try:
         # Load model with compatible attention implementation
         print("Loading model...")
@@ -47,16 +48,25 @@ def test_bertviz_debug(model_ckpt="bert-base-uncased"):
         attention = outputs.attentions
         print("Attention computed successfully.")
 
+        # Debug attention data
+        print(f"Attention Shape: {[att.shape for att in attention]}")
+        print(f"Sample Attention Weights (Layer 0, Head 0):\n{attention[0][0][0].detach().cpu().numpy()}")
+
         # Extract tokens and compute sentence B start index
         tokens = tokenizer.convert_ids_to_tokens(viz_inputs["input_ids"][0])
         sentence_b_start = (viz_inputs["token_type_ids"] == 0).sum(dim=1).item()
         print(f"Tokens: {tokens}")
         print(f"Sentence B start index: {sentence_b_start}")
 
-        # Render visualization
-        print("Generating head view visualization...")
-        html = head_view(attention, tokens, sentence_b_start, heads=[8])
+        # Check token alignment with attention matrix
+        seq_len = attention[0].shape[-1]
+        assert len(tokens) == seq_len, (
+            f"Token length {len(tokens)} does not match attention sequence length {seq_len}"
+        )
 
+        # Attempt to render visualization
+        print("Generating head view visualization...")
+        html = head_view(attention, tokens, sentence_b_start, heads=[0])
         if html is None:
             raise ValueError("head_view returned None, visualization could not be generated.")
 
@@ -68,6 +78,31 @@ def test_bertviz_debug(model_ckpt="bert-base-uncased"):
 
     except Exception as e:
         print(f"An error occurred during BERTViz testing: {e}")
+        print("Falling back to manual attention visualization...")
+        fallback_visualization(attention, tokens)
+
+def fallback_visualization(attention, tokens):
+    """Fallback manual visualization for attention using Matplotlib."""
+    try:
+        # Visualize attention for the first layer, first head
+        layer, head = 0, 0
+        attention_matrix = attention[layer][0][head].detach().cpu().numpy()
+
+        print(f"Visualizing attention for Layer {layer}, Head {head}...")
+        plt.figure(figsize=(10, 8))
+        plt.imshow(attention_matrix, cmap='viridis')
+        plt.colorbar()
+        plt.title(f"Attention Head {head} - Layer {layer}")
+        plt.xlabel("Tokens Attended To")
+        plt.ylabel("Tokens Attending")
+        plt.xticks(range(len(tokens)), tokens, rotation=90)
+        plt.yticks(range(len(tokens)), tokens)
+        plt.tight_layout()
+        plt.show()
+        print("Manual attention visualization displayed successfully.")
+
+    except Exception as e:
+        print(f"An error occurred during fallback visualization: {e}")
 
 # Run the test function
 test_bertviz_debug()
