@@ -1,5 +1,6 @@
 import torch
 import pandas as pd
+import numpy as np
 from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, AdamW
 from torch.utils.data import DataLoader, TensorDataset
@@ -50,9 +51,9 @@ y_test = torch.tensor(test_data['labels'].values)
 
 # Compute class weights
 class_weights = compute_class_weight(
-    class_weight="balanced", 
-    classes=list(range(28)), 
-    y=train_data['labels']
+    class_weight="balanced",
+    classes=np.array(list(range(28))),  # Convert classes to NumPy array
+    y=train_data['labels'].values  # Use labels from training data
 )
 class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to("cuda" if torch.cuda.is_available() else "cpu")
 
