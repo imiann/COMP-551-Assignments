@@ -21,22 +21,27 @@ SETTINGS = {
     "epochs": 3,
     "weight_decay_factor": 0.01,
     "log_interval_steps": 100,
-    "output_directory": "./results",
-    "log_directory": "./logs",
+    "output_directory": "./Results",
+    "log_directory": "./Results/logs",
 }
+
+# Ensure the Results directory exists
+os.makedirs(SETTINGS["output_directory"], exist_ok=True)
+os.makedirs(SETTINGS["log_directory"], exist_ok=True)
+
 
 # Data Loader
 def fetch_and_prepare_emotion_data():
-    """Load and filter the GoEmotions dataset."""
+    """Load and filter the GoEmotions dataset with reduced iterations."""
     dataset = load_dataset("go_emotions")
 
     # Retain only single-label examples
     def single_label_filter(example):
         return len(example["labels"]) == 1
 
-    train_set = dataset["train"].filter(single_label_filter)
-    val_set = dataset["validation"].filter(single_label_filter)
-    test_set = dataset["test"].filter(single_label_filter)
+    train_set = dataset["train"].filter(single_label_filter).select(range(3200))
+    val_set = dataset["validation"].filter(single_label_filter).select(range(3200))
+    test_set = dataset["test"].filter(single_label_filter).select(range(3200))
 
     # Simplify label structure
     for split in [train_set, val_set, test_set]:
@@ -82,8 +87,10 @@ def evaluate_predictions(predictions):
 
 
 # Visualization and Metrics
-def generate_detailed_metrics(model_identifier, true_labels, predicted_labels, label_names):
+def generate_detailed_metrics(model_identifier, true_labels, predicted_labels, label_names, results_dir):
     """Generate and save detailed evaluation metrics."""
+    os.makedirs(results_dir, exist_ok=True)
+
     print(f"Metrics for {model_identifier}:")
     print(f"Accuracy: {accuracy_score(true_labels, predicted_labels):.4f}")
     print(f"Weighted F1-Score: {f1_score(true_labels, predicted_labels, average='weighted'):.4f}\n")
@@ -94,11 +101,17 @@ def generate_detailed_metrics(model_identifier, true_labels, predicted_labels, l
     report = classification_report(true_labels, predicted_labels, target_names=label_names, digits=4)
     print("\nClassification Report:\n", report)
 
-    create_confusion_matrix_plot(cmatrix, label_names, model_identifier)
+    # Save metrics to files
+    with open(f"{results_dir}/classification_report.txt", "w") as report_file:
+        report_file.write(report)
+
+    np.savetxt(f"{results_dir}/confusion_matrix.csv", cmatrix, delimiter=",", fmt="%d")
+
+    create_confusion_matrix_plot(cmatrix, label_names, model_identifier, results_dir)
 
 
 # Confusion Matrix Plotting
-def create_confusion_matrix_plot(matrix, labels, model_identifier):
+def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     """Plot and save the confusion matrix."""
     plt.figure(figsize=(10, 8))
     plt.imshow(matrix, interpolation="nearest", cmap="Blues")
@@ -116,7 +129,7 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier):
                      color="white" if matrix[i, j] > matrix.max() / 2 else "black")
 
     plt.tight_layout()
-    plt.savefig(f"confusion_matrix_{model_identifier.split('/')[-1]}.png")
+    plt.savefig(f"{results_dir}/confusion_matrix.png")
     plt.close()
 
 
@@ -157,8 +170,11 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     weights = compute_weights(train_labels).to("cuda" if torch.cuda.is_available() else "cpu")
 
     # Training configuration
+    output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
+    os.makedirs(output_dir, exist_ok=True)
+
     training_args = TrainingArguments(
-        output_dir=f"{config['output_directory']}_{model_identifier.split('/')[-1]}",
+        output_dir=output_dir,
         evaluation_strategy="epoch",
         save_strategy="epoch",
         learning_rate=config["learning_rate"],
@@ -166,7 +182,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         per_device_eval_batch_size=config["eval_batch_size"],
         num_train_epochs=config["epochs"],
         weight_decay=config["weight_decay_factor"],
-        logging_dir=f"{config['log_directory']}_{model_identifier.split('/')[-1]}",
+        logging_dir=f"{config['log_directory']}/{model_identifier.split('/')[-1]}",
         logging_steps=config["log_interval_steps"],
         save_total_limit=2,
         load_best_model_at_end=True,
@@ -194,7 +210,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     # Generate extended metrics
     predictions = trainer.predict(test_set).predictions.argmax(-1)
-    generate_detailed_metrics(model_identifier, test_set["labels"], predictions, class_labels)
+    generate_detailed_metrics(model_identifier, test_set["labels"], predictions, class_labels, output_dir)
 
 
 # Main Script Execution
@@ -211,7 +227,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = [ "gpt2", "bert-base-uncased", "distilbert-base-uncased", "roberta-base"]
+    model_identifiers = ["bert-base-uncased", "gpt2", "distilbert-base-uncased", "roberta-base"]
 
     # Run pipeline for each model
     for model_identifier in model_identifiers:
