@@ -55,21 +55,22 @@ def fetch_and_prepare_emotion_data():
 # Tokenization Handler
 def tokenize_data(dataset, tokenizer, max_length):
     """Apply tokenization to text data."""
-    # Ensure the tokenizer has a pad token for GPT-2
     if "gpt2" in tokenizer.name_or_path:
+        # Set pad_token to eos_token if not already set
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to EOS token for GPT-2
+            tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"  # GPT-2 requires left-padding for causal models
 
     return dataset.map(
         lambda examples: tokenizer(
             examples["text"],
-            padding="max_length",
+            padding="max_length",  # Ensure all sequences are padded to max_length
             truncation=True,
             max_length=max_length,
         ),
         batched=True,
     )
+
 
 
 
@@ -183,7 +184,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     # Handle GPT-2 padding token specifics
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to EOS token
         tokenizer.padding_side = "left"
 
     model = AutoModelForSequenceClassification.from_pretrained(
@@ -245,6 +246,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         results_dir,
     )
 
+
     # Attention Visualization (only for BERT)
     if "bert" in model_identifier:
         example_text_a = "The movie was fantastic and full of surprises."
@@ -266,7 +268,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased", "gpt2"]
+    model_identifiers = ["gpt2", "bert-base-uncased"]
 
     for model_identifier in model_identifiers:
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
