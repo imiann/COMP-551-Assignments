@@ -132,19 +132,27 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     """Perform masked language modeling (MLM) on the train set."""
     print(f"Pre-training {model_name} with MLM...")
 
-    model = AutoModelForPreTraining.from_pretrained(model_name)
+    # Load model configuration and model
+    config = AutoConfig.from_pretrained(model_name)
+    model = AutoModelForPreTraining.from_pretrained(model_name, config=config)
 
-    # Tokenize data
-    tokenized_data = tokenize_data(train_set, tokenizer, SETTINGS["max_token_length"])
-    tokenized_data = tokenized_data.map(
-        lambda x: {"labels": x["input_ids"]},  # Use input IDs as labels for MLM
-        batched=True,
-    )
+    # Tokenize data and add `labels`
+    def add_labels(examples):
+        tokenized_inputs = tokenizer(
+            examples["text"],
+            padding="max_length",
+            truncation=True,
+            max_length=SETTINGS["max_token_length"],
+        )
+        tokenized_inputs["labels"] = tokenized_inputs["input_ids"].copy()  # Copy input_ids as labels
+        return tokenized_inputs
+
+    tokenized_data = train_set.map(add_labels, batched=True)
     tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-    # Adjust model configuration to avoid `num_labels` conflict
-    if hasattr(model.config, "num_labels"):
-        model.config.num_labels = model.config.vocab_size  # Align with vocabulary size
+    # Adjust model configuration
+    config.num_labels = config.vocab_size  # Align with vocab size
+    model.resize_token_embeddings(len(tokenizer))  # Resize embeddings to match tokenizer
 
     # Data collator for MLM
     data_collator = DataCollatorForLanguageModeling(
@@ -163,6 +171,7 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
         logging_steps=SETTINGS["log_interval_steps"],
     )
 
+    # Initialize Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -174,6 +183,7 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     trainer.train()
     print(f"Finished pre-training {model_name} with MLM.")
     return model
+
 
 
 
