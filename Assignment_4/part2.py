@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 SETTINGS = {
     "max_token_length": 128,
     "eval_batch_size": 32,
-    "output_directory": "./Results",
+    "output_directory": "./ResultsPart2",
 }
 
 # Ensure the Results directory exists
