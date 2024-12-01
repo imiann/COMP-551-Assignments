@@ -41,9 +41,9 @@ def fetch_and_prepare_emotion_data():
     def single_label_filter(example):
         return len(example["labels"]) == 1
 
-    train_set = dataset["train"].filter(single_label_filter).select(range(3200))
-    val_set = dataset["validation"].filter(single_label_filter).select(range(3200))
-    test_set = dataset["test"].filter(single_label_filter).select(range(3200))
+    train_set = dataset["train"].filter(single_label_filter)
+    val_set = dataset["validation"].filter(single_label_filter)
+    test_set = dataset["test"].filter(single_label_filter)
 
     # Simplify label structure
     for split in [train_set, val_set, test_set]:
@@ -344,7 +344,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["gpt2", "bert-base-uncased"]
+    model_identifiers = ["gpt2", "bert-base-uncased", "distilbert-base-uncased", "roberta-base"]
 
     for model_identifier in model_identifiers:
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
