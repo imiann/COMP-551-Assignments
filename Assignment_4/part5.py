@@ -134,10 +134,12 @@ def visualize_attention_with_bertviz(model, tokenizer, input_text, layer_index=0
     inputs = {key: val.to(model.device) for key, val in inputs.items()}  # Move inputs to device
 
     # Perform inference and collect attention weights
-    outputs = model(**inputs, output_attentions=True)
+    with torch.no_grad():
+        outputs = model(**inputs, output_hidden_states=True, return_dict=True)
 
-    # Extract the attention for the specified layer and head
-    attentions = outputs.attentions[layer_index][0][head_index].detach().cpu().numpy()
+    # Extract attention manually from hidden states (if model allows this)
+    attention = outputs.hidden_states[layer_index]  # Replace with your specific logic if available
+    attentions = attention[:, head_index].detach().cpu().numpy()  # Adjust for head
 
     # Tokens
     tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
@@ -153,7 +155,8 @@ def visualize_attention_with_bertviz(model, tokenizer, input_text, layer_index=0
     plt.xlabel("Tokens Attended To")
     plt.ylabel("Tokens Attending")
     plt.tight_layout()
-    plt.show()
+    plt.savefig(f"./Results/attention_{layer_index}_{head_index}.png")
+
 
 
 def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, pretrained_model=None):
@@ -161,6 +164,12 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     print(f"Initializing {model_identifier}...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
+
+    # Handle GPT-2 specifics
+    if "gpt2" in model_identifier:
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"
 
     if pretrained_model is None:
         model = AutoModelForSequenceClassification.from_pretrained(
@@ -215,9 +224,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     # Evaluation
     model.config.output_attentions = True  # Enable attentions for evaluation
-    example_text = "The movie was fantastic and full of surprises."
-    print(f"Visualizing attention for {model_identifier}:")
-    visualize_attention_with_bertviz(model, tokenizer, example_text, layer_index=0, head_index=0)
+    if "bert" in model_identifier:  # Only visualize attention for BERT-like models
+        example_text = "The movie was fantastic and full of surprises."
+        print(f"Visualizing attention for {model_identifier}:")
+        visualize_attention_with_bertviz(model, tokenizer, example_text, layer_index=0, head_index=0)
 
 
 # Main Script Execution
@@ -234,7 +244,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased"]
+    model_identifiers = ["bert-base-uncased", "gpt2"]
 
     for model_identifier in model_identifiers:
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
