@@ -130,78 +130,6 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.savefig(f"{results_dir}/confusion_matrix.png")
     plt.close()
 
-from transformers import DataCollatorForLanguageModeling, AutoConfig, AutoModelForMaskedLM
-
-def pretrain_with_mlm(model_name, train_set, tokenizer):
-    """Perform masked language modeling (MLM) on the train set."""
-    print(f"Pre-training {model_name} with MLM...")
-
-    # Load model for MLM
-    config = AutoConfig.from_pretrained(model_name)
-    model = AutoModelForMaskedLM.from_pretrained(model_name, config=config)
-
-    # Ensure the model's embeddings match the tokenizer's vocabulary
-    model.resize_token_embeddings(len(tokenizer))
-
-    # Tokenize data and add `labels`
-    def add_labels(examples):
-        tokenized_inputs = tokenizer(
-            examples["text"],
-            padding="max_length",
-            truncation=True,
-            max_length=SETTINGS["max_token_length"],
-        )
-        # Process each sequence in the batch
-        tokenized_inputs["labels"] = [
-            [
-                token if token < tokenizer.vocab_size else tokenizer.pad_token_id
-                for token in sequence
-            ]
-            for sequence in tokenized_inputs["input_ids"]
-        ]
-        return tokenized_inputs
-
-    tokenized_data = train_set.map(add_labels, batched=True)
-
-    # Debugging: Check the max label ID
-    max_label_id = max(max(label) for label in tokenized_data["labels"])
-    print(f"Max label ID in dataset: {max_label_id}")
-    print(f"Tokenizer vocabulary size: {tokenizer.vocab_size}")
-
-    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-
-    # Data collator for MLM
-    data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer, mlm=True, mlm_probability=0.15
-    )
-
-    # Training arguments
-    training_args = TrainingArguments(
-        output_dir=f"{SETTINGS['output_directory']}/{model_name.split('/')[-1]}_mlm",
-        evaluation_strategy="epoch",
-        learning_rate=SETTINGS["learning_rate"],
-        per_device_train_batch_size=SETTINGS["train_batch_size"],
-        num_train_epochs=1,  # Short pre-training
-        save_total_limit=1,
-        logging_dir=f"{SETTINGS['log_directory']}/{model_name.split('/')[-1]}_mlm",
-        logging_steps=SETTINGS["log_interval_steps"],
-    )
-
-    # Initialize Trainer
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=tokenized_data,
-        data_collator=data_collator,
-        tokenizer=tokenizer,
-    )
-
-    trainer.train()
-    print(f"Finished pre-training {model_name} with MLM.")
-    return model
-
-from transformers import DataCollatorForLanguageModeling
-
 def pretrain_with_nsp(model_name, train_set, tokenizer):
     """Perform next sentence prediction (NSP) on the train set."""
     print(f"Pre-training {model_name} with NSP...")
@@ -373,13 +301,13 @@ def main():
         # print(f"Running without pretraining: {model_identifier}")
         # execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
 
-        print(f"Running with MLM pretraining: {model_identifier}")
-        mlm_model = pretrain_with_mlm(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
-        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=mlm_model)
+        # print(f"Running with MLM pretraining: {model_identifier}")
+        # mlm_model = pretrain_with_mlm(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
+        # execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=mlm_model)
 
-        # print(f"Running with NSP pretraining: {model_identifier}")
-        # nsp_model = pretrain_with_nsp(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
-        # execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=nsp_model)
+        print(f"Running with NSP pretraining: {model_identifier}")
+        nsp_model = pretrain_with_nsp(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=nsp_model)
 
 
 if __name__ == "__main__":
