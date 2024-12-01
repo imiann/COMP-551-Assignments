@@ -151,17 +151,20 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
             truncation=True,
             max_length=SETTINGS["max_token_length"],
         )
-        # Ensure labels are within vocab size
+        # Process each sequence in the batch
         tokenized_inputs["labels"] = [
-            token if token < tokenizer.vocab_size else tokenizer.pad_token_id
-            for token in tokenized_inputs["input_ids"]
+            [
+                token if token < tokenizer.vocab_size else tokenizer.pad_token_id
+                for token in sequence
+            ]
+            for sequence in tokenized_inputs["input_ids"]
         ]
         return tokenized_inputs
 
     tokenized_data = train_set.map(add_labels, batched=True)
 
     # Debugging: Check the max label ID
-    max_label_id = max([max(label) for label in tokenized_data["labels"]])
+    max_label_id = max(max(label) for label in tokenized_data["labels"])
     print(f"Max label ID in dataset: {max_label_id}")
     print(f"Tokenizer vocabulary size: {tokenizer.vocab_size}")
 
