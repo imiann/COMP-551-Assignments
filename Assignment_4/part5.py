@@ -237,16 +237,23 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         print(f"Training {model_identifier}...")
         trainer.train()
 
-    # Evaluation
-    print(f"Evaluating {model_identifier} ({phase})...")
-    predictions = Trainer(
-        model=model,
-        args=training_args,
-        eval_dataset=test_set,
-        tokenizer=tokenizer,
-        compute_metrics=evaluate_predictions,
-    ).predict(test_set)
+        # Evaluate using Trainer
+        predictions = trainer.predict(test_set)
 
+    else:
+        # Evaluate without training
+        predictions = Trainer(
+            model=model,
+            args=TrainingArguments(
+                output_dir=output_dir,
+                per_device_eval_batch_size=config["eval_batch_size"],
+            ),
+            eval_dataset=test_set,
+            tokenizer=tokenizer,
+            compute_metrics=evaluate_predictions,
+        ).predict(test_set)
+
+    # Save metrics and plots
     generate_detailed_metrics(
         model_identifier.split("/")[-1],
         predictions.label_ids,
