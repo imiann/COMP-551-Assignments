@@ -248,9 +248,9 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     val_set = tokenize_data(val_set, tokenizer, config["max_token_length"])
     test_set = tokenize_data(test_set, tokenizer, config["max_token_length"])
 
-    train_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-    val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-    test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+    train_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels", "text"])
+    val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels", "text"])
+    test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels", "text"])
 
     # Training configuration
     output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
@@ -295,28 +295,38 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         results_dir,
     )
 
-
     # Visualization (only for BERT-like models)
     if "bert" in model_identifier:
         print("Generating attention visualizations...")
         model.config.output_attentions = True
-        example_text_a = "The movie was fantastic and full of surprises."
-        example_text_b = "I thoroughly enjoyed the film."
 
-        inputs = tokenizer(
-            example_text_a,
-            example_text_b,
-            return_tensors="pt",
-            truncation=True,
-            max_length=config["max_token_length"],
-            padding=True
-        ).to(model.device)
+        # Find examples for attention visualization
+        true_labels = test_set["labels"]
+        predicted_labels = predictions.predictions.argmax(-1)
 
-        outputs = model(**inputs)
-        attention = outputs.attentions
-        tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+        correct_indices = [i for i, (t, p) in enumerate(zip(true_labels, predicted_labels)) if t == p][:2]
+        incorrect_indices = [i for i, (t, p) in enumerate(zip(true_labels, predicted_labels)) if t != p][:2]
 
-        visualize_attention_manual(attention, tokens, output_dir, model_identifier.split("/")[-1])
+        # Use correct and incorrect examples for visualization
+        for idx in correct_indices + incorrect_indices:
+            example_text = test_set["text"][idx]
+            label = class_labels[true_labels[idx]]
+            predicted_label = class_labels[predicted_labels[idx]]
+            print(f"Visualizing example: '{example_text}' (True: {label}, Predicted: {predicted_label})")
+
+            inputs = tokenizer(
+                example_text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=config["max_token_length"],
+                padding=True
+            ).to(model.device)
+
+            outputs = model(**inputs)
+            attention = outputs.attentions
+            tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+
+            visualize_attention_manual(attention, tokens, output_dir, f"{model_identifier.split('/')[-1]}_example_{idx}")
 
 
 
