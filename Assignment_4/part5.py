@@ -8,6 +8,7 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
+    AutoConfig
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from sklearn.utils.class_weight import compute_class_weight
