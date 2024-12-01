@@ -56,21 +56,20 @@ def fetch_and_prepare_emotion_data():
 def tokenize_data(dataset, tokenizer, max_length):
     """Apply tokenization to text data."""
     if "gpt2" in tokenizer.name_or_path:
-        # Set pad_token to eos_token if not already set
+        # Ensure the padding token is set for GPT-2
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.padding_side = "left"  # GPT-2 requires left-padding for causal models
+            tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})
+        tokenizer.padding_side = "left"
 
     return dataset.map(
         lambda examples: tokenizer(
             examples["text"],
-            padding="max_length",  # Ensure all sequences are padded to max_length
+            padding="max_length",  # Consistent padding across batches
             truncation=True,
             max_length=max_length,
         ),
         batched=True,
     )
-
 
 
 
@@ -184,8 +183,8 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     # Handle GPT-2 padding token specifics
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to EOS token
-        tokenizer.padding_side = "left"
+            tokenizer.add_special_tokens({'pad_token': tokenizer.eos_token})  # Define pad_token
+        tokenizer.padding_side = "left"  # Required for causal models
 
     model = AutoModelForSequenceClassification.from_pretrained(
         model_identifier,
@@ -200,6 +199,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     train_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
+    # Use DataCollatorWithPadding for dynamic padding
+    from transformers import DataCollatorWithPadding
+    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
     # Training configuration
     output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
@@ -227,6 +230,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         train_dataset=train_set,
         eval_dataset=val_set,
         tokenizer=tokenizer,
+        data_collator=data_collator,  # Ensure proper padding
         compute_metrics=evaluate_predictions,
     )
 
@@ -245,7 +249,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         class_labels,
         results_dir,
     )
-
 
     # Attention Visualization (only for BERT)
     if "bert" in model_identifier:
