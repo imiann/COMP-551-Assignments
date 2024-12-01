@@ -142,6 +142,10 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     )
     tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
+    # Adjust model configuration to avoid `num_labels` conflict
+    if hasattr(model.config, "num_labels"):
+        model.config.num_labels = model.config.vocab_size  # Align with vocabulary size
+
     # Data collator for MLM
     data_collator = DataCollatorForLanguageModeling(
         tokenizer=tokenizer, mlm=True, mlm_probability=0.15
