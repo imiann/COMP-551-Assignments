@@ -4,14 +4,17 @@ from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
+    AutoModelForPreTraining,
     Trainer,
     TrainingArguments,
+    DataCollatorForLanguageModeling,
+    AutoConfig,
+    AutoModelForMaskedLM
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
 import matplotlib.pyplot as plt
-from bertviz.head_view import head_view
-from IPython.display import display, HTML
 
 # Centralized Configuration
 SETTINGS = {
@@ -126,22 +129,6 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.close()
 
 
-# Add bertviz visualization
-def visualize_attention_with_bertviz(model, tokenizer, input_text):
-    """Visualize attention matrices using bertviz's head_view."""
-    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=SETTINGS["max_token_length"])
-    inputs = {key: val.to(model.device) for key, val in inputs.items()}  # Move inputs to device
-    outputs = model(**inputs, output_attentions=True)
-
-    # Display the visualization
-    attention_html = head_view(
-        attention=outputs.attentions,  # Attention weights
-        tokens=tokenizer.convert_ids_to_tokens(inputs["input_ids"][0]),  # Tokenized input
-        sentence_b_start=None  # Single sentence (not sentence pair)
-    )
-    display(HTML(attention_html))
-
-
 def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, pretrained_model=None):
     """Train and evaluate the specified model."""
     print(f"Initializing {model_identifier}...")
@@ -158,7 +145,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         model = AutoModelForSequenceClassification.from_pretrained(
             model_identifier,
             num_labels=len(class_labels),
-            output_attentions=True,  # Enable attention outputs
         )
     else:
         model = pretrained_model
@@ -215,11 +201,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     predictions = trainer.predict(test_set).predictions.argmax(-1)
     generate_detailed_metrics(model_identifier, test_set["labels"], predictions, class_labels, output_dir)
 
-    # Add attention visualization for a sample text
-    example_text = "The movie was fantastic and full of surprises."
-    print(f"Visualizing attention for a sample text with {model_identifier}:")
-    visualize_attention_with_bertviz(model, tokenizer, example_text)
-
 
 # Main Script Execution
 def main():
@@ -235,9 +216,10 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased"]
+    model_identifiers = ["bert-base-uncased", "gpt2"]
 
     for model_identifier in model_identifiers:
+        print(f"Running without pretraining: {model_identifier}")
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
 
 
