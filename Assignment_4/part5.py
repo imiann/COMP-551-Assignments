@@ -128,16 +128,16 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.savefig(f"{results_dir}/confusion_matrix.png")
     plt.close()
 
-
-# Pre-training: Masked Language Modeling (MLM)
 def pretrain_with_mlm(model_name, train_set, tokenizer):
     """Perform masked language modeling (MLM) on the train set."""
     print(f"Pre-training {model_name} with MLM...")
+
     model = AutoModelForPreTraining.from_pretrained(model_name)
 
     # Tokenize data
     tokenized_data = tokenize_data(train_set, tokenizer, SETTINGS["max_token_length"])
-    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask"])
+    tokenized_data = tokenized_data.map(lambda x: {"labels": x["input_ids"]}, batched=True)  # Add labels
+    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
     # Data collator for MLM
     data_collator = DataCollatorForLanguageModeling(
@@ -169,15 +169,60 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     return model
 
 
-# Pre-training: Next Sentence Prediction (NSP)
+
+from transformers import DataCollatorForLanguageModeling
+
 def pretrain_with_nsp(model_name, train_set, tokenizer):
     """Perform next sentence prediction (NSP) on the train set."""
     print(f"Pre-training {model_name} with NSP...")
+
     model = AutoModelForPreTraining.from_pretrained(model_name)
 
-    # Tokenize data
-    tokenized_data = tokenize_data(train_set, tokenizer, SETTINGS["max_token_length"])
-    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask"])
+    # Prepare NSP-specific dataset
+    def create_nsp_data(examples):
+        sentences = examples["text"]
+        n = len(sentences)
+        pairs = []
+        labels = []
+
+        for i in range(0, n - 1, 2):  # Pair sentences
+            if i + 1 < n:
+                # Pair consecutive sentences as positive examples
+                pairs.append((sentences[i], sentences[i + 1]))
+                labels.append(1)
+
+                # Pair non-consecutive sentences as negative examples
+                random_idx = (i + 2) % n
+                pairs.append((sentences[i], sentences[random_idx]))
+                labels.append(0)
+
+        first_sentences, second_sentences = zip(*pairs)
+        return {"sentence1": first_sentences, "sentence2": second_sentences, "labels": labels}
+
+    # Map dataset to NSP pairs
+    nsp_dataset = train_set.map(create_nsp_data, batched=True, remove_columns=train_set.column_names)
+    tokenized_data = tokenizer(
+        list(nsp_dataset["sentence1"]),
+        text_pair=list(nsp_dataset["sentence2"]),
+        truncation=True,
+        padding="max_length",
+        max_length=SETTINGS["max_token_length"],
+        return_tensors="pt",
+    )
+    tokenized_data["labels"] = torch.tensor(nsp_dataset["labels"])  # Add labels for NSP
+
+    # Data collator
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=False  # MLM is not applied for NSP
+    )
+
+    # Wrap into a PyTorch Dataset
+    dataset = torch.utils.data.TensorDataset(
+        tokenized_data["input_ids"],
+        tokenized_data["attention_mask"],
+        tokenized_data["token_type_ids"],
+        tokenized_data["labels"],
+    )
 
     # Training arguments
     training_args = TrainingArguments(
@@ -194,13 +239,15 @@ def pretrain_with_nsp(model_name, train_set, tokenizer):
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=tokenized_data,
+        train_dataset=dataset,
         tokenizer=tokenizer,
+        data_collator=data_collator,
     )
 
     trainer.train()
     print(f"Finished pre-training {model_name} with NSP.")
     return model
+
 
 
 def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, pretrained_model=None):
