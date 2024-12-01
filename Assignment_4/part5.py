@@ -253,7 +253,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
     # Training configuration
-    output_dir = f"{config['output_directory']}_{model_identifier.split('/')[-1]}"
+    output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
     training_args = TrainingArguments(
         output_dir=output_dir,
         evaluation_strategy="epoch",
@@ -263,7 +263,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         per_device_eval_batch_size=config["eval_batch_size"],
         num_train_epochs=config["epochs"],
         weight_decay=config["weight_decay_factor"],
-        logging_dir=f"{config['log_directory']}_{model_identifier.split('/')[-1]}",
+        logging_dir=f"{config['log_directory']}/{model_identifier.split('/')[-1]}",
         logging_steps=config["log_interval_steps"],
         save_total_limit=2,
         load_best_model_at_end=True,
@@ -285,12 +285,14 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     # Evaluation
     print(f"Evaluating {model_identifier}...")
-    predictions = trainer.predict(test_set).predictions.argmax(-1)
+    predictions = trainer.predict(test_set)
+    results_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
     generate_detailed_metrics(
-        model_identifier.split("/")[-1],
-        test_set["labels"],
-        predictions,
+        model_identifier.split("/")[-1],  # Use model name for subdirectory
+        predictions.label_ids,
+        predictions.predictions.argmax(-1),
         class_labels,
+        results_dir,
     )
 
 
