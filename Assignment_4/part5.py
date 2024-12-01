@@ -8,7 +8,8 @@ from transformers import (
     Trainer,
     TrainingArguments,
     DataCollatorForLanguageModeling,
-    AutoConfig
+    AutoConfig,
+    AutoModelForMaskedLM
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from sklearn.utils.class_weight import compute_class_weight
@@ -133,9 +134,9 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     """Perform masked language modeling (MLM) on the train set."""
     print(f"Pre-training {model_name} with MLM...")
 
-    # Load model configuration and model
+    # Load model for MLM
     config = AutoConfig.from_pretrained(model_name)
-    model = AutoModelForPreTraining.from_pretrained(model_name, config=config)
+    model = AutoModelForMaskedLM.from_pretrained(model_name, config=config)
 
     # Tokenize data and add `labels`
     def add_labels(examples):
@@ -151,9 +152,8 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     tokenized_data = train_set.map(add_labels, batched=True)
     tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-    # Adjust model configuration
-    config.num_labels = config.vocab_size  # Align with vocab size
-    model.resize_token_embeddings(len(tokenizer))  # Resize embeddings to match tokenizer
+    # Ensure the model's embeddings match the tokenizer's vocabulary
+    model.resize_token_embeddings(len(tokenizer))
 
     # Data collator for MLM
     data_collator = DataCollatorForLanguageModeling(
@@ -184,6 +184,7 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     trainer.train()
     print(f"Finished pre-training {model_name} with MLM.")
     return model
+
 
 
 
