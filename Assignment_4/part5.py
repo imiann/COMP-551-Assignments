@@ -4,17 +4,14 @@ from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
-    AutoModelForPreTraining,
     Trainer,
     TrainingArguments,
-    DataCollatorForLanguageModeling,
-    AutoConfig,
-    AutoModelForMaskedLM
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
-from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
 import matplotlib.pyplot as plt
+from bertviz.head_view import head_view
+from IPython.display import display, HTML
 
 # Centralized Configuration
 SETTINGS = {
@@ -71,6 +68,7 @@ def tokenize_data(dataset, tokenizer, max_length):
         ),
         batched=True,
     )
+
 
 # Metric Computation
 def evaluate_predictions(predictions):
@@ -129,23 +127,46 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.close()
 
 
+# Add attention visualization with bertviz
+def visualize_attention_with_bertviz(model, tokenizer, input_text, layer_index=0, head_index=0):
+    """Visualize attention for a single transformer block and attention head."""
+    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=SETTINGS["max_token_length"])
+    inputs = {key: val.to(model.device) for key, val in inputs.items()}  # Move inputs to device
+
+    # Perform inference and collect attention weights
+    outputs = model(**inputs, output_attentions=True)
+
+    # Extract the attention for the specified layer and head
+    attentions = outputs.attentions[layer_index][0][head_index].detach().cpu().numpy()
+
+    # Tokens
+    tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+
+    # Display the attention matrix for the specified layer and head
+    print(f"Visualizing Attention - Layer {layer_index}, Head {head_index}")
+    plt.figure(figsize=(12, 8))
+    plt.imshow(attentions, interpolation="nearest", cmap="viridis")
+    plt.colorbar()
+    plt.xticks(range(len(tokens)), tokens, rotation=90)
+    plt.yticks(range(len(tokens)), tokens)
+    plt.title(f"Attention Matrix - Layer {layer_index}, Head {head_index}")
+    plt.xlabel("Tokens Attended To")
+    plt.ylabel("Tokens Attending")
+    plt.tight_layout()
+    plt.show()
+
+
 def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, pretrained_model=None):
     """Train and evaluate the specified model."""
     print(f"Initializing {model_identifier}...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
 
-    # Handle missing padding tokens for GPT-2
-    if "gpt2" in model_identifier:
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to eos token
-        tokenizer.padding_side = "left"  # Ensure left-padding for causal models
-
     if pretrained_model is None:
         model = AutoModelForSequenceClassification.from_pretrained(
             model_identifier,
             num_labels=len(class_labels),
-        )
+        ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     else:
         model = pretrained_model
         model.num_labels = len(class_labels)
@@ -193,13 +214,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     trainer.train()
 
     # Evaluation
-    print(f"Evaluating {model_identifier}...")
-    evaluation_results = trainer.evaluate(test_set)
-    print(f"Evaluation Results for {model_identifier}: {evaluation_results}")
-
-    # Generate metrics and save them
-    predictions = trainer.predict(test_set).predictions.argmax(-1)
-    generate_detailed_metrics(model_identifier, test_set["labels"], predictions, class_labels, output_dir)
+    model.config.output_attentions = True  # Enable attentions for evaluation
+    example_text = "The movie was fantastic and full of surprises."
+    print(f"Visualizing attention for {model_identifier}:")
+    visualize_attention_with_bertviz(model, tokenizer, example_text, layer_index=0, head_index=0)
 
 
 # Main Script Execution
@@ -216,10 +234,9 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased", "gpt2"]
+    model_identifiers = ["bert-base-uncased"]
 
     for model_identifier in model_identifiers:
-        print(f"Running without pretraining: {model_identifier}")
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
 
 
