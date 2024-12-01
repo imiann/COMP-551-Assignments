@@ -125,20 +125,77 @@ y_test_llm = torch.tensor(test_df['labels'].to_numpy())
 
 # -----------------------------------
 
-# BERT Model 
-Tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-Model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased")
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import accuracy_score
+import pandas as pd
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
-Model.eval()
+def tokenize_data(tokenizer, texts, max_length=128):
+    return tokenizer(
+        list(texts), truncation=True, padding='max_length', max_length=max_length, return_tensors='pt'
+    )
 
-with torch.no_grad():
+# Define models and tokenizers
+models_to_evaluate = {
+    "bert-base-uncased": "bert-base-uncased",
+    "gpt2": "gpt2"
+}
 
-    output = Model(X_test_llm, attention_mask=X_test_attention_masks)
+tokenizers = {name: AutoTokenizer.from_pretrained(model) for name, model in models_to_evaluate.items()}
+
+# Tokenize data for all models
+tokenized_data = {}
+for name, tokenizer in tokenizers.items():
+    print(f"Tokenizing data for {name}...")
+    tokenized_data[name] = {
+        "train": tokenize_data(tokenizer, train_df['text']),
+        "validation": tokenize_data(tokenizer, validation_df['text']),
+        "test": tokenize_data(tokenizer, test_df['text'])
+    }
+
+# Convert labels to tensors
+y_train = torch.tensor(train_df['labels'].to_numpy())
+y_validation = torch.tensor(validation_df['labels'].to_numpy())
+y_test = torch.tensor(test_df['labels'].to_numpy())
+
+def evaluate_model(model, data, labels, batch_size=32):
+    dataset = TensorDataset(data['input_ids'], data['attention_mask'], labels)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     
-    # Get the predicted class label
-    predictions = torch.argmax(output.logits, dim=1)
+    model.eval()
+    predictions, true_labels = [], []
+    with torch.no_grad():
+        for batch in tqdm(dataloader):
+            inputs, masks, targets = batch
+            outputs = model(input_ids=inputs, attention_mask=masks)
+            logits = outputs.logits
+            predictions.extend(torch.argmax(logits, dim=1).cpu().numpy())
+            true_labels.extend(targets.cpu().numpy())
     
-predictions
+    accuracy = accuracy_score(true_labels, predictions)
+    return accuracy
 
-print(predictions)
+results = {}
+for name, model_name in models_to_evaluate.items():
+    print(f"Evaluating {name}...")
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=28)
+    acc = evaluate_model(model, tokenized_data[name]["test"], y_test)
+    results[name] = acc
+    print(f"Accuracy for {name}: {acc}")
+
+results_df = pd.DataFrame.from_dict(results, orient="index", columns=["Accuracy"])
+results_df.index.name = "Model"
+results_df.reset_index(inplace=True)
+
+# Plot
+plt.figure(figsize=(10, 6))
+plt.bar(results_df["Model"], results_df["Accuracy"])
+plt.xlabel("Model")
+plt.ylabel("Accuracy")
+plt.title("Accuracy of Pretrained Models on GoEmotions")
+plt.xticks(rotation=45)
+plt.savefig("model_comparison.png")
+
 
