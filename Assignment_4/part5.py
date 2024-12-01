@@ -63,10 +63,11 @@ def tokenize_data(dataset, tokenizer, max_length):
 # Class Weights Generator
 def compute_weights(labels_array):
     """Generate weights for imbalanced classes."""
+    unique_classes = np.unique(labels_array)
     weights = compute_class_weight(
         class_weight="balanced",
-        classes=np.unique(labels_array),
-        y=labels_array,
+        classes=unique_classes,
+        y=labels_array.flatten() if labels_array.ndim > 1 else labels_array,
     )
     return torch.tensor(weights, dtype=torch.float)
 
