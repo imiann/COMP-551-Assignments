@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from torch.optim.lr_scheduler import StepLR
 from torch import nn
 from tqdm import tqdm
+from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score
 
 # Load the simplified version of GoEmotions
@@ -16,7 +17,6 @@ train_data = dataset["train"].to_pandas()
 validation_data = dataset["validation"].to_pandas()
 test_data = dataset["test"].to_pandas()
 
-# Define a helper function to extract the single label
 def extract_label(label_list):
     return label_list[0]
 
@@ -48,6 +48,14 @@ y_train = torch.tensor(train_data['labels'].values)
 y_validation = torch.tensor(validation_data['labels'].values)
 y_test = torch.tensor(test_data['labels'].values)
 
+# Compute class weights
+class_weights = compute_class_weight(
+    class_weight="balanced", 
+    classes=list(range(28)), 
+    y=train_data['labels']
+)
+class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to("cuda" if torch.cuda.is_available() else "cpu")
+
 # Prepare datasets and dataloaders
 train_dataset = TensorDataset(train_encodings['input_ids'], train_encodings['attention_mask'], y_train)
 validation_dataset = TensorDataset(validation_encodings['input_ids'], validation_encodings['attention_mask'], y_validation)
@@ -71,10 +79,10 @@ model.classifier = nn.Linear(model.config.hidden_size, 28)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 
-# Define optimizer, scheduler, and loss function
+# Define optimizer, scheduler, and weighted loss function
 optimizer = AdamW(model.parameters(), lr=5e-5)
 scheduler = StepLR(optimizer, step_size=1, gamma=0.9)
-loss_fn = nn.CrossEntropyLoss()
+loss_fn = nn.CrossEntropyLoss(weight=class_weights_tensor)
 
 # Train the model
 num_epochs = 3
