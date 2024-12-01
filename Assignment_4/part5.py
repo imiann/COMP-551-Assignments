@@ -12,6 +12,7 @@ from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classifi
 from bertviz import head_view
 import numpy as np
 import matplotlib.pyplot as plt
+from IPython.display import HTML
 
 # Centralized Configuration
 SETTINGS = {
@@ -54,9 +55,10 @@ def fetch_and_prepare_emotion_data():
 # Tokenization Handler
 def tokenize_data(dataset, tokenizer, max_length):
     """Apply tokenization to text data."""
-    if "gpt2" in tokenizer.name_or_path:  # Handle GPT-2 specifics
+    # Ensure the tokenizer has a pad token for GPT-2
+    if "gpt2" in tokenizer.name_or_path:
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to eos token
+            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to EOS token for GPT-2
         tokenizer.padding_side = "left"  # GPT-2 requires left-padding for causal models
 
     return dataset.map(
@@ -68,6 +70,7 @@ def tokenize_data(dataset, tokenizer, max_length):
         ),
         batched=True,
     )
+
 
 
 # Metric Computation
@@ -129,9 +132,9 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.close()
 
 
-# Attention Visualization
-def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence_b=None):
-    """Visualize attention for BERT-like models using bertviz.head_view."""
+# Modified Attention Visualization Function
+def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence_b=None, save_path="./Results/head_view.html"):
+    """Visualize attention for BERT-like models using bertviz.head_view and save it to an HTML file."""
     model = AutoModel.from_pretrained(model_ckpt, output_attentions=True).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     
     # Tokenize inputs
@@ -146,9 +149,14 @@ def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence
     tokens = tokenizer.convert_ids_to_tokens(viz_inputs["input_ids"][0])
     sentence_b_start = None if sentence_b is None else (viz_inputs["token_type_ids"] == 0).sum(dim=1).item()
 
-    # Display head view visualization
+    # Render head view visualization
     print(f"Visualizing attention for: '{sentence_a}' {'and ' + sentence_b if sentence_b else ''}")
-    head_view(attention, tokens, sentence_b_start, heads=[8])
+    html = head_view(attention, tokens, sentence_b_start, heads=[8])
+
+    # Save the visualization to an HTML file
+    with open(save_path, "w") as f:
+        f.write(HTML(html).data)
+    print(f"Head view visualization saved to: {save_path}")
 
 
 def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config):
@@ -157,7 +165,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
 
-    # Handle GPT-2 specifics
+    # Handle GPT-2 padding token specifics
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
