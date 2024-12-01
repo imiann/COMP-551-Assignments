@@ -14,4 +14,4 @@ module load miniconda/miniconda-fall2024
 
 echo "TEST" > test_out.txt
 nvidia-smi >> test_out.txt
-python test.py
+python project4draft.py

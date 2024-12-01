@@ -1,0 +1,24 @@
+/usr/local/env_dirs/fall2024/lib/python3.12/site-packages/transformers/tokenization_utils_base.py:1601: FutureWarning: `clean_up_tokenization_spaces` was not set. It will be set to `True` by default. This behavior will be depracted in transformers v4.45, and will be then set to `False` by default. For more details check this issue: https://github.com/huggingface/transformers/issues/31884
+  warnings.warn(
+Matplotlib is building the font cache; this may take a moment.
+/usr/local/env_dirs/fall2024/lib/python3.12/site-packages/transformers/tokenization_utils_base.py:1601: FutureWarning: `clean_up_tokenization_spaces` was not set. It will be set to `True` by default. This behavior will be depracted in transformers v4.45, and will be then set to `False` by default. For more details check this issue: https://github.com/huggingface/transformers/issues/31884
+  warnings.warn(
+Traceback (most recent call last):
+  File "/home/2023/imcfar/Assignment4_551/COMP-551-Assignments/Assignment_4/project4draft.py", line 153, in <module>
+    "train": tokenize_data(tokenizer, train_df['text']),
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/2023/imcfar/Assignment4_551/COMP-551-Assignments/Assignment_4/project4draft.py", line 136, in tokenize_data
+    return tokenizer(
+           ^^^^^^^^^^
+  File "/usr/local/env_dirs/fall2024/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 3055, in __call__
+    encodings = self._call_one(text=text, text_pair=text_pair, **all_kwargs)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/env_dirs/fall2024/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 3142, in _call_one
+    return self.batch_encode_plus(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/env_dirs/fall2024/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 3329, in batch_encode_plus
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+                                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/env_dirs/fall2024/lib/python3.12/site-packages/transformers/tokenization_utils_base.py", line 2959, in _get_padding_truncation_strategies
+    raise ValueError(
+ValueError: Asking to pad but the tokenizer does not have a padding token. Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`.
