@@ -4,14 +4,14 @@ from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
+    AutoModel,
     Trainer,
     TrainingArguments,
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+from bertviz import head_view
 import numpy as np
 import matplotlib.pyplot as plt
-from bertviz.head_view import head_view
-from IPython.display import display, HTML
 
 # Centralized Configuration
 SETTINGS = {
@@ -80,14 +80,16 @@ def evaluate_predictions(predictions):
     return {"accuracy": accuracy, "f1": f1}
 
 
-# Visualization and Metrics
+# Detailed Metrics
 def generate_detailed_metrics(model_identifier, true_labels, predicted_labels, label_names, results_dir):
     """Generate and save detailed evaluation metrics."""
     os.makedirs(results_dir, exist_ok=True)
 
+    accuracy = accuracy_score(true_labels, predicted_labels)
+    f1 = f1_score(true_labels, predicted_labels, average="weighted")
     print(f"Metrics for {model_identifier}:")
-    print(f"Accuracy: {accuracy_score(true_labels, predicted_labels):.4f}")
-    print(f"Weighted F1-Score: {f1_score(true_labels, predicted_labels, average='weighted'):.4f}\n")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Weighted F1-Score: {f1:.4f}\n")
 
     cmatrix = confusion_matrix(true_labels, predicted_labels)
     print("Confusion Matrix:\n", cmatrix)
@@ -127,39 +129,29 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.close()
 
 
-# Add attention visualization with bertviz
-def visualize_attention_with_bertviz(model, tokenizer, input_text, layer_index=0, head_index=0):
-    """Visualize attention for a single transformer block and attention head."""
-    inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=SETTINGS["max_token_length"])
-    inputs = {key: val.to(model.device) for key, val in inputs.items()}  # Move inputs to device
+# Attention Visualization
+def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence_b=None):
+    """Visualize attention for BERT-like models using bertviz.head_view."""
+    model = AutoModel.from_pretrained(model_ckpt, output_attentions=True).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    
+    # Tokenize inputs
+    viz_inputs = tokenizer(sentence_a, sentence_b, return_tensors="pt", truncation=True, max_length=SETTINGS["max_token_length"])
+    viz_inputs = {key: val.to(model.device) for key, val in viz_inputs.items()}
 
-    # Perform inference and collect attention weights
-    with torch.no_grad():
-        outputs = model(**inputs, output_hidden_states=True, return_dict=True)
+    # Forward pass to get attention weights
+    outputs = model(**viz_inputs)
+    attention = outputs.attentions
 
-    # Extract attention manually from hidden states (if model allows this)
-    attention = outputs.hidden_states[layer_index]  # Replace with your specific logic if available
-    attentions = attention[:, head_index].detach().cpu().numpy()  # Adjust for head
+    # Compute tokens and optional sentence B start index
+    tokens = tokenizer.convert_ids_to_tokens(viz_inputs["input_ids"][0])
+    sentence_b_start = None if sentence_b is None else (viz_inputs["token_type_ids"] == 0).sum(dim=1).item()
 
-    # Tokens
-    tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-
-    # Display the attention matrix for the specified layer and head
-    print(f"Visualizing Attention - Layer {layer_index}, Head {head_index}")
-    plt.figure(figsize=(12, 8))
-    plt.imshow(attentions, interpolation="nearest", cmap="viridis")
-    plt.colorbar()
-    plt.xticks(range(len(tokens)), tokens, rotation=90)
-    plt.yticks(range(len(tokens)), tokens)
-    plt.title(f"Attention Matrix - Layer {layer_index}, Head {head_index}")
-    plt.xlabel("Tokens Attended To")
-    plt.ylabel("Tokens Attending")
-    plt.tight_layout()
-    plt.savefig(f"./Results/attention_{layer_index}_{head_index}.png")
+    # Display head view visualization
+    print(f"Visualizing attention for: '{sentence_a}' {'and ' + sentence_b if sentence_b else ''}")
+    head_view(attention, tokens, sentence_b_start, heads=[8])
 
 
-
-def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, pretrained_model=None):
+def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config):
     """Train and evaluate the specified model."""
     print(f"Initializing {model_identifier}...")
 
@@ -171,14 +163,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
             tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = "left"
 
-    if pretrained_model is None:
-        model = AutoModelForSequenceClassification.from_pretrained(
-            model_identifier,
-            num_labels=len(class_labels),
-        ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    else:
-        model = pretrained_model
-        model.num_labels = len(class_labels)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_identifier,
+        num_labels=len(class_labels),
+    ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
     # Tokenize datasets
     train_set = tokenize_data(train_set, tokenizer, config["max_token_length"])
@@ -223,11 +211,22 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     trainer.train()
 
     # Evaluation
-    model.config.output_attentions = True  # Enable attentions for evaluation
-    if "bert" in model_identifier:  # Only visualize attention for BERT-like models
-        example_text = "The movie was fantastic and full of surprises."
-        print(f"Visualizing attention for {model_identifier}:")
-        visualize_attention_with_bertviz(model, tokenizer, example_text, layer_index=0, head_index=0)
+    print(f"Evaluating {model_identifier}...")
+    predictions = trainer.predict(test_set)
+    results_dir = f"{output_dir}/metrics"
+    generate_detailed_metrics(
+        model_identifier,
+        predictions.label_ids,
+        predictions.predictions.argmax(-1),
+        class_labels,
+        results_dir,
+    )
+
+    # Attention Visualization (only for BERT)
+    if "bert" in model_identifier:
+        example_text_a = "The movie was fantastic and full of surprises."
+        example_text_b = "I enjoyed the film thoroughly."
+        visualize_attention_with_bertviz(model_identifier, tokenizer, example_text_a, example_text_b)
 
 
 # Main Script Execution
