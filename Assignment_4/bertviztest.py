@@ -3,6 +3,7 @@ from transformers import AutoTokenizer, AutoModel
 from bertviz import head_view
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 def test_bertviz_debug(model_ckpt="bert-base-uncased"):
     """Test BERTViz functionality with detailed debugging and fallback visualization."""
