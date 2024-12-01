@@ -136,7 +136,10 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
 
     # Tokenize data
     tokenized_data = tokenize_data(train_set, tokenizer, SETTINGS["max_token_length"])
-    tokenized_data = tokenized_data.map(lambda x: {"labels": x["input_ids"]}, batched=True)  # Add labels
+    tokenized_data = tokenized_data.map(
+        lambda x: {"labels": x["input_ids"]},  # Use input IDs as labels for MLM
+        batched=True,
+    )
     tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
     # Data collator for MLM
@@ -167,6 +170,7 @@ def pretrain_with_mlm(model_name, train_set, tokenizer):
     trainer.train()
     print(f"Finished pre-training {model_name} with MLM.")
     return model
+
 
 
 
@@ -340,16 +344,16 @@ def main():
     model_identifiers = ["bert-base-uncased", "gpt2"]
 
     for model_identifier in model_identifiers:
-        print(f"Running without pretraining: {model_identifier}")
-        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
+        # print(f"Running without pretraining: {model_identifier}")
+        # execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
 
         print(f"Running with MLM pretraining: {model_identifier}")
         mlm_model = pretrain_with_mlm(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=mlm_model)
 
-        print(f"Running with NSP pretraining: {model_identifier}")
-        nsp_model = pretrain_with_nsp(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
-        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=nsp_model)
+        # print(f"Running with NSP pretraining: {model_identifier}")
+        # nsp_model = pretrain_with_nsp(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
+        # execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=nsp_model)
 
 
 if __name__ == "__main__":
