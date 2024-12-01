@@ -1,9 +1,10 @@
-import numpy as np
-import pandas as pd
-from datasets import load_dataset
 import torch
-from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+import pandas as pd
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import accuracy_score
+from datasets import load_dataset
+from tqdm import tqdm
 
 # Load the simplified version of GoEmotions
 dataset = load_dataset("google-research-datasets/go_emotions", "simplified")
@@ -18,11 +19,9 @@ train_df = train_data.to_pandas()
 validation_df = validation_data.to_pandas()
 test_df = test_data.to_pandas()
 
-# Delete multiple labels
-
 # Define a helper function to extract the single label
 def extract_label(label_list):
-  return label_list[0]
+    return label_list[0]
 
 # Filter rows with exactly one label and extract the single label
 train_df = train_df[train_df['labels'].apply(len) == 1]
@@ -34,104 +33,12 @@ validation_df.loc[:, 'labels'] = validation_df['labels'].apply(extract_label)
 test_df = test_df[test_df['labels'].apply(len) == 1]
 test_df.loc[:, 'labels'] = test_df['labels'].apply(extract_label)
 
-
-# Conversion of label objects to Integers
+# Convert labels to integers
 train_df['labels'] = train_df['labels'].astype(int)
 validation_df['labels'] = validation_df['labels'].astype(int)
 test_df['labels'] = test_df['labels'].astype(int)
 
-
-# Preprocessing for Baseline
-
-# Initialize a Vectorizer
-#vectorizer_baseline = CountVectorizer()
-vectorizer_baseline = TfidfVectorizer()
-
-# Fit the vectorizer on training data and transform all splits
-X_train_baseline = vectorizer_baseline.fit_transform(train_df['text'])
-X_validation_baseline = vectorizer_baseline.transform(validation_df['text'])
-X_test_baseline = vectorizer_baseline.transform(test_df['text'])
-
-# Labels (already preprocessed)
-y_train_baseline = train_df['labels'].to_numpy()  # Convert to NumPy array
-y_validation_baseline = validation_df['labels'].to_numpy()
-y_test_baseline = test_df['labels'].to_numpy()
-
-# Preprocessing for Bayesian
-
-# Initialize a Vectorizer
-vectorizer_bayesian = CountVectorizer()
-
-# Fit the vectorizer on training data and transform all splits
-X_train_bayesian = vectorizer_bayesian.fit_transform(train_df['text'])
-X_validation_bayesian = vectorizer_bayesian.transform(validation_df['text'])
-X_test_bayesian = vectorizer_bayesian.transform(test_df['text'])
-
-# Labels (already preprocessed)
-y_train_bayesian = train_df['labels'].to_numpy()  # Convert to NumPy array
-y_validation_bayesian = validation_df['labels'].to_numpy()
-y_test_bayesian = test_df['labels'].to_numpy()
-
-# Class distributions
-
-def class_distribtion(label_set):
-  labels, counts = np.unique(label_set, return_counts=True)
-
-  # Calculate frequencies as percentages
-  frequencies = (counts / counts.sum()) * 100
-
-  # Create a DataFrame to store counts and frequencies
-  class_distribution_table = pd.DataFrame({
-    "Class Label": labels,
-    "Count": counts,
-    "Frequency (%)": frequencies
-  })
-
-  # Sort the table by class label for better organization
-  class_distribution_table = class_distribution_table.sort_values(by="Class Label").reset_index(drop=True)
-  return class_distribution_table
-
-# Preprocessing for LLM
-
-# Initialize a tokenizer
-tokenizer_llm = AutoTokenizer.from_pretrained("bert-base-uncased") # We will use bert-base-uncased
-
-# Tokenize text data for all splits
-train_encodings = tokenizer_llm(
-    list(train_df['text']), truncation=True, padding='max_length', max_length=128
-)
-validation_encodings = tokenizer_llm(
-    list(validation_df['text']), truncation=True, padding='max_length', max_length=128
-)
-test_encodings = tokenizer_llm(
-    list(test_df['text']), truncation=True, padding='max_length', max_length=128
-)
-
-# Convert tokenized data into PyTorch tensors
-X_train_llm = torch.tensor(train_encodings['input_ids'])
-X_train_attention_masks = torch.tensor(train_encodings['attention_mask'])
-y_train_llm = torch.tensor(train_df['labels'].to_numpy())
-
-X_validation_llm = torch.tensor(validation_encodings['input_ids'])
-X_validation_attention_masks = torch.tensor(validation_encodings['attention_mask'])
-y_validation_llm = torch.tensor(validation_df['labels'].to_numpy())
-
-X_test_llm = torch.tensor(test_encodings['input_ids'])
-X_test_attention_masks = torch.tensor(test_encodings['attention_mask'])
-y_test_llm = torch.tensor(test_df['labels'].to_numpy())
-
-
-
-
-# -----------------------------------
-
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.metrics import accuracy_score
-import pandas as pd
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-
+# Define tokenization function
 def tokenize_data(tokenizer, texts, max_length=128):
     return tokenizer(
         list(texts), truncation=True, padding='max_length', max_length=max_length, return_tensors='pt'
@@ -140,10 +47,18 @@ def tokenize_data(tokenizer, texts, max_length=128):
 # Define models and tokenizers
 models_to_evaluate = {
     "bert-base-uncased": "bert-base-uncased",
+    "distilbert-base-uncased": "distilbert-base-uncased",
+    "roberta-base": "roberta-base",
     "gpt2": "gpt2"
 }
 
+# Load tokenizers
 tokenizers = {name: AutoTokenizer.from_pretrained(model) for name, model in models_to_evaluate.items()}
+
+# Add padding token for tokenizers without one
+for name, tokenizer in tokenizers.items():
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token  # Set padding token to EOS token
 
 # Tokenize data for all models
 tokenized_data = {}
@@ -155,11 +70,12 @@ for name, tokenizer in tokenizers.items():
         "test": tokenize_data(tokenizer, test_df['text'])
     }
 
-# Convert labels to tensors
+# Labels (same across models)
 y_train = torch.tensor(train_df['labels'].to_numpy())
 y_validation = torch.tensor(validation_df['labels'].to_numpy())
 y_test = torch.tensor(test_df['labels'].to_numpy())
 
+# Define evaluation function
 def evaluate_model(model, data, labels, batch_size=32):
     dataset = TensorDataset(data['input_ids'], data['attention_mask'], labels)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
@@ -177,6 +93,7 @@ def evaluate_model(model, data, labels, batch_size=32):
     accuracy = accuracy_score(true_labels, predictions)
     return accuracy
 
+# Evaluate all models
 results = {}
 for name, model_name in models_to_evaluate.items():
     print(f"Evaluating {name}...")
@@ -185,17 +102,18 @@ for name, model_name in models_to_evaluate.items():
     results[name] = acc
     print(f"Accuracy for {name}: {acc}")
 
+# Display results
 results_df = pd.DataFrame.from_dict(results, orient="index", columns=["Accuracy"])
 results_df.index.name = "Model"
 results_df.reset_index(inplace=True)
 
-# Plot
+# Plot results
+import matplotlib.pyplot as plt
+
 plt.figure(figsize=(10, 6))
 plt.bar(results_df["Model"], results_df["Accuracy"])
 plt.xlabel("Model")
 plt.ylabel("Accuracy")
 plt.title("Accuracy of Pretrained Models on GoEmotions")
 plt.xticks(rotation=45)
-plt.savefig("model_comparison.png")
-
-
+plt.show()
