@@ -4,15 +4,13 @@ from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
-    AutoModel,
     Trainer,
     TrainingArguments,
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
-from bertviz import head_view
 import numpy as np
 import matplotlib.pyplot as plt
-from IPython.display import HTML
+
 
 # Centralized Configuration
 SETTINGS = {
@@ -72,7 +70,6 @@ def tokenize_data(dataset, tokenizer, max_length):
     )
 
 
-
 # Metric Computation
 def evaluate_predictions(predictions):
     """Calculate metrics for evaluation."""
@@ -82,17 +79,18 @@ def evaluate_predictions(predictions):
     f1 = f1_score(true_labels, predicted_labels, average="weighted")
     return {"accuracy": accuracy, "f1": f1}
 
-def visualize_attention_manual(attention, tokens, output_dir="./Results", model_identifier="model"):
+
+# Manual Attention Visualization
+def visualize_attention_manual(attention, tokens, output_dir, model_identifier):
     """
     Manual visualization for attention using Matplotlib. Saves plots in a dedicated folder for each model.
     """
-    # Create a subdirectory for the model's visualizations
     model_output_dir = os.path.join(output_dir, model_identifier)
     os.makedirs(model_output_dir, exist_ok=True)
 
     try:
-        for layer in range(len(attention)):  # Iterate through all layers
-            for head in range(attention[layer].shape[1]):  # Iterate through all heads
+        for layer in range(len(attention)):  # Iterate through layers
+            for head in range(attention[layer].shape[1]):  # Iterate through heads
                 attention_matrix = attention[layer][0][head].detach().cpu().numpy()
 
                 print(f"Visualizing attention for Layer {layer}, Head {head}...")
@@ -106,38 +104,34 @@ def visualize_attention_manual(attention, tokens, output_dir="./Results", model_
                 plt.yticks(range(len(tokens)), tokens)
                 plt.tight_layout()
 
-                # Save the plot as an image
                 save_path = os.path.join(model_output_dir, f"attention_layer{layer}_head{head}.png")
                 plt.savefig(save_path)
                 plt.close()
                 print(f"Saved attention visualization to {save_path}")
 
-        print(f"All attention visualizations saved successfully in {model_output_dir}.")
-
     except Exception as e:
         print(f"An error occurred during manual attention visualization: {e}")
 
 
-
 # Detailed Metrics
 def generate_detailed_metrics(model_identifier, true_labels, predicted_labels, label_names, results_dir):
-    """Generate and save detailed evaluation metrics in a dedicated subdirectory."""
-    # Create a subdirectory for the current model
+    """Generate and save detailed evaluation metrics."""
     model_results_dir = os.path.join(results_dir, model_identifier)
     os.makedirs(model_results_dir, exist_ok=True)
 
-    # Print and save metrics
-    print(f"Metrics for {model_identifier}:")
+    # Accuracy and F1-score
     accuracy = accuracy_score(true_labels, predicted_labels)
     f1 = f1_score(true_labels, predicted_labels, average="weighted")
+
+    print(f"Metrics for {model_identifier}:")
     print(f"Accuracy: {accuracy:.4f}")
     print(f"Weighted F1-Score: {f1:.4f}\n")
 
-    # Confusion matrix
+    # Confusion Matrix
     cmatrix = confusion_matrix(true_labels, predicted_labels)
     print("Confusion Matrix:\n", cmatrix)
 
-    # Classification report
+    # Classification Report
     report = classification_report(true_labels, predicted_labels, target_names=label_names, digits=4)
     print("\nClassification Report:\n", report)
 
@@ -153,7 +147,7 @@ def generate_detailed_metrics(model_identifier, true_labels, predicted_labels, l
 
 # Confusion Matrix Plotting
 def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
-    """Plot and save the confusion matrix in the specific results directory."""
+    """Plot and save the confusion matrix."""
     plt.figure(figsize=(10, 8))
     plt.imshow(matrix, interpolation="nearest", cmap="Blues")
     plt.colorbar()
@@ -176,61 +170,17 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     print(f"Confusion matrix plot saved to: {save_path}")
 
 
-
-# Modified Attention Visualization Function
-def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence_b=None, save_path="./Results/head_view.html"):
-    """Visualize attention for BERT-like models using bertviz.head_view and save it to an HTML file."""
-    model = AutoModel.from_pretrained(
-        model_ckpt,
-        output_attentions=True,
-        attn_implementation="eager"  # Force compatible attention implementation
-    ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    
-    # Ensure the tokenizer has a pad token defined
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token if tokenizer.eos_token else "[PAD]"
-
-    # Tokenize inputs
-    viz_inputs = tokenizer(
-        sentence_a, 
-        sentence_b, 
-        return_tensors="pt", 
-        truncation=True, 
-        max_length=SETTINGS["max_token_length"], 
-        padding=True
-    )
-    #viz_inputs = {key: val.to(model.device) for key, val in viz_inputs.items()}
-
-    # Forward pass to get attention weights
-    outputs = model(**viz_inputs)
-    attention = outputs.attentions
-
-    # Compute tokens and optional sentence B start index
-    tokens = tokenizer.convert_ids_to_tokens(viz_inputs["input_ids"][0])
-    sentence_b_start = None if sentence_b is None else (viz_inputs["token_type_ids"] == 0).sum(dim=1).item()
-
-    # Render head view visualization
-    print(f"Visualizing attention for: '{sentence_a}' {'and ' + sentence_b if sentence_b else ''}")
-    html = head_view(attention, tokens, sentence_b_start, heads=[8])
-
-    # Save the visualization to an HTML file
-    with open(save_path, "w") as f:
-        f.write(html)
-    print(f"Head view visualization saved to: {save_path}")
-
-
-def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config):
-    """Train and evaluate the specified model."""
-    print(f"Initializing {model_identifier}...")
+def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, phase="untrained"):
+    """Evaluate or train and evaluate the specified model."""
+    print(f"Initializing {model_identifier} ({phase})...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
 
     # Handle missing padding tokens for GPT-2
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
-            print("Adding padding token for GPT-2...")
             tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.padding_side = "left"  # GPT-2 requires left-padding
+        tokenizer.padding_side = "left"
 
     model = AutoModelForSequenceClassification.from_pretrained(
         model_identifier,
@@ -252,82 +202,76 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels", "text"])
     test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels", "text"])
 
-    # Training configuration
-    output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
-    training_args = TrainingArguments(
-        output_dir=output_dir,
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        learning_rate=config["learning_rate"],
-        per_device_train_batch_size=config["train_batch_size"],
-        per_device_eval_batch_size=config["eval_batch_size"],
-        num_train_epochs=config["epochs"],
-        weight_decay=config["weight_decay_factor"],
-        logging_dir=f"{config['log_directory']}/{model_identifier.split('/')[-1]}",
-        logging_steps=config["log_interval_steps"],
-        save_total_limit=2,
-        load_best_model_at_end=True,
-        metric_for_best_model="accuracy",
-    )
+    # Results folder
+    output_dir = f"{config['output_directory']}/{phase}/{model_identifier.split('/')[-1]}"
+    os.makedirs(output_dir, exist_ok=True)
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_set,
-        eval_dataset=val_set,
-        tokenizer=tokenizer,
-        compute_metrics=evaluate_predictions,
-    )
+    if phase == "trained":
+        # Training configuration
+        training_args = TrainingArguments(
+            output_dir=output_dir,
+            evaluation_strategy="epoch",
+            save_strategy="epoch",
+            learning_rate=config["learning_rate"],
+            per_device_train_batch_size=config["train_batch_size"],
+            per_device_eval_batch_size=config["eval_batch_size"],
+            num_train_epochs=config["epochs"],
+            weight_decay=config["weight_decay_factor"],
+            logging_dir=f"{config['log_directory']}/{model_identifier.split('/')[-1]}",
+            logging_steps=config["log_interval_steps"],
+            save_total_limit=2,
+            load_best_model_at_end=True,
+            metric_for_best_model="accuracy",
+        )
 
-    # Training
-    print(f"Training {model_identifier}...")
-    trainer.train()
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_set,
+            eval_dataset=val_set,
+            tokenizer=tokenizer,
+            compute_metrics=evaluate_predictions,
+        )
+
+        # Training
+        print(f"Training {model_identifier}...")
+        trainer.train()
 
     # Evaluation
-    print(f"Evaluating {model_identifier}...")
-    predictions = trainer.predict(test_set)
-    results_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
+    print(f"Evaluating {model_identifier} ({phase})...")
+    predictions = Trainer(
+        model=model,
+        args=training_args,
+        eval_dataset=test_set,
+        tokenizer=tokenizer,
+        compute_metrics=evaluate_predictions,
+    ).predict(test_set)
+
     generate_detailed_metrics(
-        model_identifier.split("/")[-1],  # Use model name for subdirectory
+        model_identifier.split("/")[-1],
         predictions.label_ids,
         predictions.predictions.argmax(-1),
         class_labels,
-        results_dir,
+        output_dir,
     )
 
-    # Visualization (only for BERT-like models)
-    if "bert" in model_identifier:
-        print("Generating attention visualizations...")
-        model.config.output_attentions = True
+    # Manual Visualization
+    print(f"Generating manual attention visualizations ({phase})...")
+    model.config.output_attentions = True
+    for idx in range(2):  # First 2 examples
+        example_text = test_set["text"][idx]
+        inputs = tokenizer(
+            example_text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=config["max_token_length"],
+            padding=True
+        ).to(model.device)
 
-        # Find examples for attention visualization
-        true_labels = test_set["labels"]
-        predicted_labels = predictions.predictions.argmax(-1)
-
-        correct_indices = [i for i, (t, p) in enumerate(zip(true_labels, predicted_labels)) if t == p][:2]
-        incorrect_indices = [i for i, (t, p) in enumerate(zip(true_labels, predicted_labels)) if t != p][:2]
-
-        # Use correct and incorrect examples for visualization
-        for idx in correct_indices + incorrect_indices:
-            example_text = test_set["text"][idx]
-            label = class_labels[true_labels[idx]]
-            predicted_label = class_labels[predicted_labels[idx]]
-            print(f"Visualizing example: '{example_text}' (True: {label}, Predicted: {predicted_label})")
-
-            inputs = tokenizer(
-                example_text,
-                return_tensors="pt",
-                truncation=True,
-                max_length=config["max_token_length"],
-                padding=True
-            ).to(model.device)
-
-            outputs = model(**inputs)
-            attention = outputs.attentions
-            tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-
-            visualize_attention_manual(attention, tokens, output_dir, f"{model_identifier.split('/')[-1]}_example_{idx}")
-
+        outputs = model(**inputs)
+        attention = outputs.attentions
+        tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
+        visualize_attention_manual(attention, tokens, output_dir, model_identifier.split("/")[-1])
 
 
 # Main Script Execution
@@ -347,7 +291,11 @@ def main():
     model_identifiers = ["gpt2", "bert-base-uncased", "distilbert-base-uncased", "roberta-base"]
 
     for model_identifier in model_identifiers:
-        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
+        # Evaluate pre-trained (untrained) model
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, phase="untrained")
+
+        # Train and re-evaluate the model
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, phase="trained")
 
 
 if __name__ == "__main__":
