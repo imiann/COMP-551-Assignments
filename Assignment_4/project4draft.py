@@ -77,21 +77,23 @@ y_test = torch.tensor(test_df['labels'].to_numpy())
 
 # Define evaluation function
 def evaluate_model(model, data, labels, batch_size=32):
+    # Prepare DataLoader
     dataset = TensorDataset(data['input_ids'], data['attention_mask'], labels)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
     
     model.eval()
-    predictions, true_labels = [], []
+    predictions = []  # Only need predictions; true labels come from `labels`
     with torch.no_grad():
         for batch in tqdm(dataloader):
-            inputs, masks, targets = batch
+            inputs, masks, _ = batch  # Ignore true labels from DataLoader
             outputs = model(input_ids=inputs, attention_mask=masks)
             logits = outputs.logits
             predictions.extend(torch.argmax(logits, dim=1).cpu().numpy())
-            true_labels.extend(targets.cpu().numpy())
     
-    accuracy = accuracy_score(true_labels, predictions)
+    # Compute accuracy
+    accuracy = accuracy_score(labels.cpu().numpy(), predictions)
     return accuracy
+
 
 # Evaluate all models
 results = {}
@@ -116,4 +118,4 @@ plt.xlabel("Model")
 plt.ylabel("Accuracy")
 plt.title("Accuracy of Pretrained Models on GoEmotions")
 plt.xticks(rotation=45)
-plt.show()
+plt.sav
