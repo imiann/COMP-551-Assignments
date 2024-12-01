@@ -135,9 +135,13 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
 # Modified Attention Visualization Function
 def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence_b=None, save_path="./Results/head_view.html"):
     """Visualize attention for BERT-like models using bertviz.head_view and save it to an HTML file."""
-    model = AutoModel.from_pretrained(model_ckpt, output_attentions=True).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    model = AutoModel.from_pretrained(
+        model_ckpt,
+        output_attentions=True,
+        attn_implementation="eager"  # Force compatible attention implementation
+    ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
     
-    # Ensure the tokenizer has a pad token defined (especially for GPT-like models)
+    # Ensure the tokenizer has a pad token defined
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token if tokenizer.eos_token else "[PAD]"
 
@@ -148,7 +152,7 @@ def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence
         return_tensors="pt", 
         truncation=True, 
         max_length=SETTINGS["max_token_length"], 
-        padding=True  # Ensures proper padding is applied
+        padding=True
     )
     viz_inputs = {key: val.to(model.device) for key, val in viz_inputs.items()}
 
@@ -162,16 +166,12 @@ def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence
 
     # Render head view visualization
     print(f"Visualizing attention for: '{sentence_a}' {'and ' + sentence_b if sentence_b else ''}")
-    try:
-        html = head_view(attention, tokens, sentence_b_start, heads=[8])
-        if html is None:
-            raise ValueError("head_view returned None instead of HTML content.")
-        # Save the visualization to an HTML file
-        with open(save_path, "w") as f:
-            f.write(html)
-        print(f"Head view visualization saved to: {save_path}")
-    except Exception as e:
-        print(f"An error occurred while generating the attention visualization: {e}")
+    html = head_view(attention, tokens, sentence_b_start, heads=[8])
+
+    # Save the visualization to an HTML file
+    with open(save_path, "w") as f:
+        f.write(html)
+    print(f"Head view visualization saved to: {save_path}")
 
 
 def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config):
@@ -268,7 +268,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["gpt2", "bert-base-uncased"]
+    model_identifiers = ["bert-base-uncased", "gpt2"]
 
     for model_identifier in model_identifiers:
         execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
