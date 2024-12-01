@@ -81,28 +81,37 @@ def test_bertviz_debug(model_ckpt="bert-base-uncased"):
         print("Falling back to manual attention visualization...")
         fallback_visualization(attention, tokens)
 
-def fallback_visualization(attention, tokens):
+def fallback_visualization(attention, tokens, output_dir="./Results"):
     """Fallback manual visualization for attention using Matplotlib."""
-    try:
-        # Visualize attention for the first layer, first head
-        layer, head = 0, 0
-        attention_matrix = attention[layer][0][head].detach().cpu().numpy()
+    os.makedirs(output_dir, exist_ok=True)  # Ensure output directory exists
 
-        print(f"Visualizing attention for Layer {layer}, Head {head}...")
-        plt.figure(figsize=(10, 8))
-        plt.imshow(attention_matrix, cmap='viridis')
-        plt.colorbar()
-        plt.title(f"Attention Head {head} - Layer {layer}")
-        plt.xlabel("Tokens Attended To")
-        plt.ylabel("Tokens Attending")
-        plt.xticks(range(len(tokens)), tokens, rotation=90)
-        plt.yticks(range(len(tokens)), tokens)
-        plt.tight_layout()
-        plt.show()
-        print("Manual attention visualization displayed successfully.")
+    try:
+        for layer in range(len(attention)):  # Iterate through all layers
+            for head in range(attention[layer].shape[1]):  # Iterate through all heads
+                attention_matrix = attention[layer][0][head].detach().cpu().numpy()
+
+                print(f"Visualizing attention for Layer {layer}, Head {head}...")
+                plt.figure(figsize=(10, 8))
+                plt.imshow(attention_matrix, cmap='viridis')
+                plt.colorbar()
+                plt.title(f"Attention Head {head} - Layer {layer}")
+                plt.xlabel("Tokens Attended To")
+                plt.ylabel("Tokens Attending")
+                plt.xticks(range(len(tokens)), tokens, rotation=90)
+                plt.yticks(range(len(tokens)), tokens)
+                plt.tight_layout()
+
+                # Save the plot as an image
+                save_path = os.path.join(output_dir, f"attention_layer{layer}_head{head}.png")
+                plt.savefig(save_path)
+                plt.close()
+                print(f"Saved attention visualization to {save_path}")
+
+        print("All attention visualizations saved successfully.")
 
     except Exception as e:
         print(f"An error occurred during fallback visualization: {e}")
+
 
 # Run the test function
 test_bertviz_debug()
