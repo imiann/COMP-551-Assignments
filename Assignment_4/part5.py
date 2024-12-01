@@ -1,12 +1,14 @@
 import torch
 from datasets import load_dataset
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AdamW
-from torch.utils.data import DataLoader, TensorDataset
-from torch.optim.lr_scheduler import StepLR
-from torch import nn
-from tqdm import tqdm
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments,
+)
 from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
+
 
 # Load and preprocess the dataset
 def load_data():
@@ -41,14 +43,39 @@ def tokenize_data(dataset, tokenizer, max_length=128):
     )
 
 
-# Main training function
-def train_bert_with_class_weight():
+# Compute class weights for imbalanced datasets
+def compute_class_weights(labels):
+    class_weights = compute_class_weight(
+        class_weight="balanced",
+        classes=np.unique(labels),
+        y=labels,
+    )
+    return torch.tensor(class_weights, dtype=torch.float)
+
+
+# Define evaluation metrics
+def compute_metrics(pred):
+    from sklearn.metrics import accuracy_score, f1_score
+    labels = pred.label_ids
+    preds = pred.predictions.argmax(-1)
+    acc = accuracy_score(labels, preds)
+    f1 = f1_score(labels, preds, average="weighted")
+    return {"accuracy": acc, "f1": f1}
+
+
+# Train and evaluate the model
+def train_with_trainer(model_name):
     # Load and preprocess data
     train_data, val_data, test_data = load_data()
 
     # Initialize tokenizer and model
-    model_name = "bert-base-uncased"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+    # Handle models like GPT-2 that don't have a pad token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=28)
 
     # Tokenize datasets
     train_data = tokenize_data(train_data, tokenizer)
@@ -59,105 +86,66 @@ def train_bert_with_class_weight():
     val_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     test_data.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-    # Convert to DataLoader
-    train_loader = DataLoader(train_data, batch_size=32, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=32)
-    test_loader = DataLoader(test_data, batch_size=32)
-
     # Compute class weights
     labels = np.array(train_data["labels"])
-    class_weights = compute_class_weight(
-        class_weight="balanced",
-        classes=np.unique(labels),
-        y=labels,
+    class_weights = compute_class_weights(labels).to("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Define training arguments
+    training_args = TrainingArguments(
+        output_dir=f"./results_{model_name.split('/')[-1]}",
+        evaluation_strategy="epoch",
+        save_strategy="epoch",
+        learning_rate=5e-5,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=32,
+        num_train_epochs=3,
+        weight_decay=0.01,
+        logging_dir=f"./logs_{model_name.split('/')[-1]}",
+        logging_steps=100,
+        save_total_limit=2,
+        load_best_model_at_end=True,
+        metric_for_best_model="accuracy",
     )
-    class_weights_tensor = torch.tensor(class_weights, dtype=torch.float).to("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load pretrained model
-    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=28)
+    # Define Trainer
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_data,
+        eval_dataset=val_data,
+        tokenizer=tokenizer,
+        compute_metrics=compute_metrics,
+        data_collator=None,  # Default data collator works
+    )
 
-    # Freeze BERT layers
-    for param in model.base_model.parameters():
-        param.requires_grad = False
+    # Train the model
+    print(f"Training the model: {model_name}")
+    trainer.train()
 
-    # Move model to device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    # Evaluate the model
+    print(f"Evaluating the model: {model_name}")
+    test_results = trainer.evaluate(test_data)
+    print(f"Test results for {model_name}: {test_results}")
 
-    # Define optimizer, scheduler, and weighted loss function
-    optimizer = AdamW(model.parameters(), lr=5e-5)
-    scheduler = StepLR(optimizer, step_size=1, gamma=0.9)
-    loss_fn = nn.CrossEntropyLoss(weight=class_weights_tensor)
-
-    # Training loop
-    num_epochs = 3
-    best_validation_loss = float("inf")
-
-    for epoch in range(num_epochs):
-        print(f"Epoch {epoch + 1}/{num_epochs}")
-
-        # Training phase
-        model.train()
-        total_loss = 0
-        for batch in tqdm(train_loader):
-            optimizer.zero_grad()
-            input_ids, attention_mask, labels = [b.to(device) for b in batch]
-
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-
-        avg_train_loss = total_loss / len(train_loader)
-        print(f"Training loss: {avg_train_loss}")
-
-        # Validation phase
-        model.eval()
-        total_loss = 0
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for batch in val_loader:
-                input_ids, attention_mask, labels = [b.to(device) for b in batch]
-
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-                loss = loss_fn(outputs.logits, labels)
-                total_loss += loss.item()
-
-                predictions = torch.argmax(outputs.logits, dim=1)
-                correct += (predictions == labels).sum().item()
-                total += labels.size(0)
-
-        avg_validation_loss = total_loss / len(val_loader)
-        accuracy = correct / total
-        print(f"Validation loss: {avg_validation_loss}, Accuracy: {accuracy}")
-
-        # Save the best model
-        if avg_validation_loss < best_validation_loss:
-            best_validation_loss = avg_validation_loss
-            torch.save(model.state_dict(), "bert_finetuned_best.pth")
-
-        scheduler.step()
-
-    # Load the best model and evaluate on the test set
-    model.load_state_dict(torch.load("bert_finetuned_best.pth"))
-    model.eval()
-
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for batch in test_loader:
-            input_ids, attention_mask, labels = [b.to(device) for b in batch]
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            predictions = torch.argmax(outputs.logits, dim=1)
-            correct += (predictions == labels).sum().item()
-            total += labels.size(0)
-
-    test_accuracy = correct / total
-    print(f"Test Accuracy: {test_accuracy}")
+    return test_results
 
 
-# Run the script
+# Main function
+def main():
+    # Define models to evaluate
+    models = [
+        "bert-base-uncased",
+        "gpt2",
+    ]
+
+    # Train and evaluate each model
+    for model_name in models:
+        try:
+            results = train_with_trainer(model_name)
+            print(f"Test results for {model_name}: {results}")
+        except Exception as e:
+            print(f"Error with model {model_name}: {e}")
+
+
 if __name__ == "__main__":
-    train_bert_with_class_weight()
+    main()
