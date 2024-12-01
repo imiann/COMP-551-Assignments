@@ -265,8 +265,22 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     # Manual Visualization
     print(f"Generating manual attention visualizations ({phase})...")
     model.config.output_attentions = True
-    for idx in range(2):  # First 2 examples
+
+    # Identify correct and incorrect predictions
+    true_labels = test_set["labels"]
+    predicted_labels = predictions.predictions.argmax(-1)
+
+    correct_indices = [i for i, (t, p) in enumerate(zip(true_labels, predicted_labels)) if t == p][:2]
+    incorrect_indices = [i for i, (t, p) in enumerate(zip(true_labels, predicted_labels)) if t != p][:2]
+
+    for idx in correct_indices + incorrect_indices:
         example_text = test_set["text"][idx]
+        label = class_labels[true_labels[idx]]
+        predicted_label = class_labels[predicted_labels[idx]]
+        status = "correct" if idx in correct_indices else "incorrect"
+        print(f"Visualizing example ({status}): '{example_text}' (True: {label}, Predicted: {predicted_label})")
+
+        # Tokenize and compute attention
         inputs = tokenizer(
             example_text,
             return_tensors="pt",
@@ -278,7 +292,9 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         outputs = model(**inputs)
         attention = outputs.attentions
         tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-        visualize_attention_manual(attention, tokens, output_dir, model_identifier.split("/")[-1])
+
+        # Save visualization
+        visualize_attention_manual(attention, tokens, output_dir, f"{model_identifier.split('/')[-1]}_{status}_example_{idx}")
 
 
 # Main Script Execution
