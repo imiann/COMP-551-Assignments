@@ -225,21 +225,23 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
 
-    # Handle GPT-2 specifics
+    # Handle missing padding tokens for GPT-2
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
             print("Adding padding token for GPT-2...")
-            tokenizer.pad_token = tokenizer.eos_token  # Set pad_token to eos_token
-        tokenizer.padding_side = "left"  # GPT-2 requires left-padding for causal models
+            tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"  # GPT-2 requires left-padding
 
     model = AutoModelForSequenceClassification.from_pretrained(
         model_identifier,
         num_labels=len(class_labels),
-    ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    )
 
-    # Resize embeddings for GPT-2 if new tokens are added
+    # Adjust model configuration for GPT-2
     if "gpt2" in model_identifier:
-        model.resize_token_embeddings(len(tokenizer))
+        print("Configuring GPT-2...")
+        model.config.pad_token_id = tokenizer.pad_token_id
+        model.resize_token_embeddings(len(tokenizer))  # Resize embeddings for new tokens
 
     # Tokenize datasets
     train_set = tokenize_data(train_set, tokenizer, config["max_token_length"])
@@ -250,14 +252,8 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
-    # Use DataCollatorWithPadding for dynamic padding
-    from transformers import DataCollatorWithPadding
-    data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
-
     # Training configuration
-    output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
-    os.makedirs(output_dir, exist_ok=True)
-
+    output_dir = f"{config['output_directory']}_{model_identifier.split('/')[-1]}"
     training_args = TrainingArguments(
         output_dir=output_dir,
         evaluation_strategy="epoch",
@@ -267,7 +263,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         per_device_eval_batch_size=config["eval_batch_size"],
         num_train_epochs=config["epochs"],
         weight_decay=config["weight_decay_factor"],
-        logging_dir=f"{config['log_directory']}/{model_identifier.split('/')[-1]}",
+        logging_dir=f"{config['log_directory']}_{model_identifier.split('/')[-1]}",
         logging_steps=config["log_interval_steps"],
         save_total_limit=2,
         load_best_model_at_end=True,
@@ -280,7 +276,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         train_dataset=train_set,
         eval_dataset=val_set,
         tokenizer=tokenizer,
-        data_collator=data_collator,  # Ensure proper padding
         compute_metrics=evaluate_predictions,
     )
 
@@ -290,15 +285,14 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     # Evaluation
     print(f"Evaluating {model_identifier}...")
-    predictions = trainer.predict(test_set)
-    results_dir = f"{output_dir}/metrics"
+    predictions = trainer.predict(test_set).predictions.argmax(-1)
     generate_detailed_metrics(
-        model_identifier.split("/")[-1],  # Use model name for subdirectory
-        predictions.label_ids,
-        predictions.predictions.argmax(-1),
+        model_identifier.split("/")[-1],
+        test_set["labels"],
+        predictions,
         class_labels,
-        results_dir,
     )
+
 
     # Visualization (only for BERT-like models)
     if "bert" in model_identifier:
