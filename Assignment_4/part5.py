@@ -4,8 +4,10 @@ from datasets import load_dataset
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
+    AutoModelForPreTraining,
     Trainer,
     TrainingArguments,
+    DataCollatorForLanguageModeling,
 )
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
 from sklearn.utils.class_weight import compute_class_weight
@@ -32,7 +34,7 @@ os.makedirs(SETTINGS["log_directory"], exist_ok=True)
 
 # Data Loader
 def fetch_and_prepare_emotion_data():
-    """Load and filter the GoEmotions dataset with reduced iterations."""
+    """Load and filter the GoEmotions dataset."""
     dataset = load_dataset("go_emotions")
 
     # Retain only single-label examples
@@ -53,6 +55,11 @@ def fetch_and_prepare_emotion_data():
 # Tokenization Handler
 def tokenize_data(dataset, tokenizer, max_length):
     """Apply tokenization to text data."""
+    if "gpt2" in tokenizer.name_or_path:  # Handle GPT-2 specifics
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to eos token
+        tokenizer.padding_side = "left"  # GPT-2 requires left-padding for causal models
+
     return dataset.map(
         lambda examples: tokenizer(
             examples["text"],
@@ -63,17 +70,6 @@ def tokenize_data(dataset, tokenizer, max_length):
         batched=True,
     )
 
-
-# Class Weights Generator
-def compute_weights(labels_array):
-    """Generate weights for imbalanced classes."""
-    unique_classes = np.unique(labels_array)
-    weights = compute_class_weight(
-        class_weight="balanced",
-        classes=unique_classes,
-        y=labels_array.flatten() if labels_array.ndim > 1 else labels_array,
-    )
-    return torch.tensor(weights, dtype=torch.float)
 
 
 # Metric Computation
@@ -133,28 +129,100 @@ def create_confusion_matrix_plot(matrix, labels, model_identifier, results_dir):
     plt.close()
 
 
-# Training and Evaluation Workflow
-def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config):
+# Pre-training: Masked Language Modeling (MLM)
+def pretrain_with_mlm(model_name, train_set, tokenizer):
+    """Perform masked language modeling (MLM) on the train set."""
+    print(f"Pre-training {model_name} with MLM...")
+    model = AutoModelForPreTraining.from_pretrained(model_name)
+
+    # Tokenize data
+    tokenized_data = tokenize_data(train_set, tokenizer, SETTINGS["max_token_length"])
+    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask"])
+
+    # Data collator for MLM
+    data_collator = DataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=True, mlm_probability=0.15
+    )
+
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir=f"{SETTINGS['output_directory']}/{model_name.split('/')[-1]}_mlm",
+        evaluation_strategy="epoch",
+        learning_rate=SETTINGS["learning_rate"],
+        per_device_train_batch_size=SETTINGS["train_batch_size"],
+        num_train_epochs=1,  # Short pre-training
+        save_total_limit=1,
+        logging_dir=f"{SETTINGS['log_directory']}/{model_name.split('/')[-1]}_mlm",
+        logging_steps=SETTINGS["log_interval_steps"],
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized_data,
+        data_collator=data_collator,
+        tokenizer=tokenizer,
+    )
+
+    trainer.train()
+    print(f"Finished pre-training {model_name} with MLM.")
+    return model
+
+
+# Pre-training: Next Sentence Prediction (NSP)
+def pretrain_with_nsp(model_name, train_set, tokenizer):
+    """Perform next sentence prediction (NSP) on the train set."""
+    print(f"Pre-training {model_name} with NSP...")
+    model = AutoModelForPreTraining.from_pretrained(model_name)
+
+    # Tokenize data
+    tokenized_data = tokenize_data(train_set, tokenizer, SETTINGS["max_token_length"])
+    tokenized_data.set_format(type="torch", columns=["input_ids", "attention_mask"])
+
+    # Training arguments
+    training_args = TrainingArguments(
+        output_dir=f"{SETTINGS['output_directory']}/{model_name.split('/')[-1]}_nsp",
+        evaluation_strategy="epoch",
+        learning_rate=SETTINGS["learning_rate"],
+        per_device_train_batch_size=SETTINGS["train_batch_size"],
+        num_train_epochs=1,  # Short pre-training
+        save_total_limit=1,
+        logging_dir=f"{SETTINGS['log_directory']}/{model_name.split('/')[-1]}_nsp",
+        logging_steps=SETTINGS["log_interval_steps"],
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=tokenized_data,
+        tokenizer=tokenizer,
+    )
+
+    trainer.train()
+    print(f"Finished pre-training {model_name} with NSP.")
+    return model
+
+
+def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class_labels, config, pretrained_model=None):
     """Train and evaluate the specified model."""
     print(f"Initializing {model_identifier}...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
 
-    # Handle missing padding tokens for GPT-2 and similar models
+    # Handle missing padding tokens for GPT-2
     if "gpt2" in model_identifier:
         if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
+            tokenizer.pad_token = tokenizer.eos_token  # Set pad token to eos token
         tokenizer.padding_side = "left"  # Ensure left-padding for causal models
 
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_identifier,
-        num_labels=len(class_labels),
-    )
-
-    # Adjust model configuration for GPT-2
-    if "gpt2" in model_identifier:
-        model.config.pad_token_id = tokenizer.pad_token_id  # Synchronize model's config with tokenizer
-        model.resize_token_embeddings(len(tokenizer))  # Resize embeddings for new tokens
+    if pretrained_model is None:
+        model = AutoModelForSequenceClassification.from_pretrained(
+            model_identifier,
+            num_labels=len(class_labels),
+        )
+    else:
+        model = pretrained_model
+        model.num_labels = len(class_labels)
 
     # Tokenize datasets
     train_set = tokenize_data(train_set, tokenizer, config["max_token_length"])
@@ -164,10 +232,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     train_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     val_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
     test_set.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
-
-    # Compute class weights
-    train_labels = np.array(train_set["labels"])
-    weights = compute_weights(train_labels).to("cuda" if torch.cuda.is_available() else "cpu")
 
     # Training configuration
     output_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
@@ -189,7 +253,6 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
         metric_for_best_model="accuracy",
     )
 
-    # Initialize Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -208,7 +271,7 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
     evaluation_results = trainer.evaluate(test_set)
     print(f"Evaluation Results for {model_identifier}: {evaluation_results}")
 
-    # Generate extended metrics
+    # Generate metrics and save them
     predictions = trainer.predict(test_set).predictions.argmax(-1)
     generate_detailed_metrics(model_identifier, test_set["labels"], predictions, class_labels, output_dir)
 
@@ -227,14 +290,19 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased", "gpt2", "distilbert-base-uncased", "roberta-base"]
+    model_identifiers = ["bert-base-uncased", "gpt2"]
 
-    # Run pipeline for each model
     for model_identifier in model_identifiers:
-        try:
-            execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
-        except Exception as err:
-            print(f"Error while processing {model_identifier}: {err}")
+        print(f"Running without pretraining: {model_identifier}")
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS)
+
+        print(f"Running with MLM pretraining: {model_identifier}")
+        mlm_model = pretrain_with_mlm(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=mlm_model)
+
+        print(f"Running with NSP pretraining: {model_identifier}")
+        nsp_model = pretrain_with_nsp(model_identifier, train_set, AutoTokenizer.from_pretrained(model_identifier))
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, emotion_labels, SETTINGS, pretrained_model=nsp_model)
 
 
 if __name__ == "__main__":

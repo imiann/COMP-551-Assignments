@@ -8,4 +8,5 @@ sbatch ...
 squeue
 sqeue -u $USER
 
-scp mimi:/home/2023/imcfar/Assignment4_551/COMP-551-Assignments/Assignment 4/Folder 
+scp mimi:/home/2023/imcfar/Assignment4_551/COMP-551-Assignments/Assignment 4/Folder
+
