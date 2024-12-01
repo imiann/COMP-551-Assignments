@@ -154,7 +154,7 @@ def visualize_attention_with_bertviz(model_ckpt, tokenizer, sentence_a, sentence
         max_length=SETTINGS["max_token_length"], 
         padding=True
     )
-    viz_inputs = {key: val.to(model.device) for key, val in viz_inputs.items()}
+    #viz_inputs = {key: val.to(model.device) for key, val in viz_inputs.items()}
 
     # Forward pass to get attention weights
     outputs = model(**viz_inputs)
