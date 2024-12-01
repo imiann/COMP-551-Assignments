@@ -7,9 +7,11 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
-from sklearn.metrics import accuracy_score, f1_score
-from bertviz.head_view import show
-from IPython.display import display
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix, classification_report
+import numpy as np
+import matplotlib.pyplot as plt
+from bertviz.head_view import head_view
+from IPython.display import display, HTML
 
 # Centralized Configuration
 SETTINGS = {
@@ -57,27 +59,72 @@ def evaluate_predictions(predictions):
     return {"accuracy": accuracy, "f1": f1}
 
 
-# Visualization
+# Visualization with Metrics
+def generate_detailed_metrics_and_visualizations(
+    model_identifier, tokenizer, model, test_set, class_labels, results_dir
+):
+    """Generate evaluation metrics and visualize attention."""
+    os.makedirs(results_dir, exist_ok=True)
+
+    # Compute predictions
+    predictions = Trainer(model=model).predict(test_set)
+    true_labels = predictions.label_ids
+    predicted_labels = predictions.predictions.argmax(-1)
+
+    # Compute metrics
+    accuracy = accuracy_score(true_labels, predicted_labels)
+    f1 = f1_score(true_labels, predicted_labels, average="weighted")
+    cmatrix = confusion_matrix(true_labels, predicted_labels)
+    report = classification_report(true_labels, predicted_labels, target_names=class_labels, digits=4)
+
+    # Print metrics
+    print(f"Metrics for {model_identifier}:")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"Weighted F1-Score: {f1:.4f}\n")
+    print("Confusion Matrix:\n", cmatrix)
+    print("\nClassification Report:\n", report)
+
+    # Save metrics to files
+    with open(f"{results_dir}/classification_report.txt", "w") as report_file:
+        report_file.write(report)
+    np.savetxt(f"{results_dir}/confusion_matrix.csv", cmatrix, delimiter=",", fmt="%d")
+
+    # Visualize attention for examples
+    example_text_correct = "The movie was fantastic and full of surprises."
+    example_text_incorrect = "The product failed miserably."
+
+    print("Visualizing Attention for Correct Example:")
+    visualize_attention_with_bertviz(model, tokenizer, example_text_correct)
+
+    print("Visualizing Attention for Incorrect Example:")
+    visualize_attention_with_bertviz(model, tokenizer, example_text_incorrect)
+
+
+# Attention Visualization
 def visualize_attention_with_bertviz(model, tokenizer, input_text):
-    """Visualize attention matrices using bertviz."""
+    """Visualize attention matrices using bertviz's head_view."""
     inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=SETTINGS["max_token_length"])
     inputs = {key: val.to(model.device) for key, val in inputs.items()}  # Move inputs to device
     outputs = model(**inputs, output_attentions=True)
-    attentions = outputs.attentions
 
-    tokens = tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-    show(model, tokenizer, inputs["input_ids"], attentions)
+    # Display the visualization
+    attention_html = head_view(
+        attention=outputs.attentions,  # Attention weights
+        tokens=tokenizer.convert_ids_to_tokens(inputs["input_ids"][0]),  # Tokenized input
+        sentence_b_start=None  # Single sentence (not sentence pair)
+    )
+    display(HTML(attention_html))
 
 
 # Model Pipeline
-def execute_model_pipeline(model_identifier, train_set, val_set, test_set, config):
+def execute_model_pipeline(model_identifier, train_set, val_set, test_set, config, class_labels):
     """Train and evaluate the specified model."""
     print(f"Initializing {model_identifier}...")
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
     model = AutoModelForSequenceClassification.from_pretrained(
         model_identifier,
-        num_labels=28,  # Number of emotion labels in GoEmotions
+        num_labels=len(class_labels),
         output_attentions=True  # Enable attention outputs
     ).to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
@@ -128,20 +175,10 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, confi
     print(f"Training {model_identifier}...")
     trainer.train()
 
-    # Evaluation
-    print(f"Evaluating {model_identifier}...")
-    evaluation_results = trainer.evaluate(test_set)
-    print(f"Evaluation Results for {model_identifier}: {evaluation_results}")
-
-    # Visualize Attention for Examples
-    example_text_correct = "The movie was fantastic and full of surprises."
-    example_text_incorrect = "The product failed miserably."
-
-    print("Visualizing Attention for Correct Example:")
-    visualize_attention_with_bertviz(model, tokenizer, example_text_correct)
-
-    print("Visualizing Attention for Incorrect Example:")
-    visualize_attention_with_bertviz(model, tokenizer, example_text_incorrect)
+    # Evaluation and visualization
+    results_dir = f"{config['output_directory']}/{model_identifier.split('/')[-1]}"
+    print(f"Evaluating and visualizing results for {model_identifier}...")
+    generate_detailed_metrics_and_visualizations(model_identifier, tokenizer, model, test_set, class_labels, results_dir)
 
 
 # Main Script Execution
@@ -149,11 +186,19 @@ def main():
     # Load dataset
     train_set, val_set, test_set = fetch_and_prepare_emotion_data()
 
+    # Emotion labels for GoEmotions
+    emotion_labels = [
+        "admiration", "amusement", "anger", "annoyance", "approval", "caring", "confusion",
+        "curiosity", "desire", "disappointment", "disapproval", "disgust", "embarrassment",
+        "excitement", "fear", "gratitude", "grief", "joy", "love", "nervousness",
+        "optimism", "pride", "realization", "relief", "remorse", "sadness", "surprise", "neutral",
+    ]
+
     # Models to test
-    model_identifiers = ["bert-base-uncased", "gpt2"]
+    model_identifiers = ["bert-base-uncased"]
 
     for model_identifier in model_identifiers:
-        execute_model_pipeline(model_identifier, train_set, val_set, test_set, SETTINGS)
+        execute_model_pipeline(model_identifier, train_set, val_set, test_set, SETTINGS, emotion_labels)
 
 
 if __name__ == "__main__":
