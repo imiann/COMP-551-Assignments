@@ -3,7 +3,7 @@ import pandas as pd
 from datasets import load_dataset
 import torch
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 # Load the simplified version of GoEmotions
 dataset = load_dataset("google-research-datasets/go_emotions", "simplified")
@@ -124,4 +124,21 @@ y_test_llm = torch.tensor(test_df['labels'].to_numpy())
 
 
 # -----------------------------------
+
+# BERT Model 
+Tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+Model = AutoModelForSequenceClassification.from_pretrained("bert-base-uncased")
+
+Model.eval()
+
+with torch.no_grad():
+
+    output = Model(X_test_llm, attention_mask=X_test_attention_masks)
+    
+    # Get the predicted class label
+    predictions = torch.argmax(output.logits, dim=1)
+    
+predictions
+
+print(predictions)
 
