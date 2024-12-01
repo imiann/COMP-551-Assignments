@@ -1,3 +1,4 @@
+import os
 import torch
 from datasets import load_dataset
 from transformers import (
@@ -11,7 +12,6 @@ from sklearn.utils.class_weight import compute_class_weight
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 # Centralized Configuration
 SETTINGS = {
     "max_token_length": 128,
@@ -24,7 +24,6 @@ SETTINGS = {
     "output_directory": "./results",
     "log_directory": "./logs",
 }
-
 
 # Data Loader
 def fetch_and_prepare_emotion_data():
@@ -128,15 +127,21 @@ def execute_model_pipeline(model_identifier, train_set, val_set, test_set, class
 
     tokenizer = AutoTokenizer.from_pretrained(model_identifier)
 
-    # Handle missing padding tokens for certain models (e.g., GPT-2)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    # Handle missing padding tokens for GPT-2 and similar models
+    if "gpt2" in model_identifier:
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"  # Ensure left-padding for causal models
 
-    model = AutoModelForSequenceClassification.from_pretrained(model_identifier, num_labels=len(class_labels))
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_identifier,
+        num_labels=len(class_labels),
+    )
 
-    # Adjust embeddings for new tokens
-    if tokenizer.pad_token:
-        model.resize_token_embeddings(len(tokenizer))
+    # Adjust model configuration for GPT-2
+    if "gpt2" in model_identifier:
+        model.config.pad_token_id = tokenizer.pad_token_id  # Synchronize model's config with tokenizer
+        model.resize_token_embeddings(len(tokenizer))  # Resize embeddings for new tokens
 
     # Tokenize datasets
     train_set = tokenize_data(train_set, tokenizer, config["max_token_length"])
@@ -206,7 +211,7 @@ def main():
     ]
 
     # Models to test
-    model_identifiers = ["bert-base-uncased", "gpt2"]
+    model_identifiers = [ "gpt2", "bert-base-uncased", "distilbert-base-uncased", "roberta-base"]
 
     # Run pipeline for each model
     for model_identifier in model_identifiers:
